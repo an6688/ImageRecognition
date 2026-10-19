@@ -22,6 +22,7 @@ class App:
         self.events = queue.Queue()
         self.cancel = threading.Event()
         self.busy = False
+        self.untagged_only = False
         self.all_view = False
         self.show_hidden = False
         self.selected = None
@@ -35,6 +36,8 @@ class App:
         style.configure('TButton', font=('Segoe UI', 10), padding=(12, 8))
         style.configure('Accent.TButton', background='#5b54da', foreground='white')
         style.map('Accent.TButton', background=[('active', '#4842b8')])
+        style.configure('Identify.TButton', background='#fff0ce', foreground='#744600')
+        style.map('Identify.TButton', background=[('active', '#ffe0a0')])
         header = ttk.Frame(root, padding=(28, 22))
         header.pack(fill='x')
         ttk.Label(header, text='PhotoPeople', style='Title.TLabel').pack(side='left')
@@ -43,6 +46,13 @@ class App:
         self.scan_button.pack(side='right')
         self.stats = ttk.Label(root, padding=(28, 0), wraplength=1050)
         self.stats.pack(anchor='w')
+        self.review_notice = ttk.Frame(root, padding=(28, 8))
+        self.review_notice.pack(fill='x')
+        self.review_text = ttk.Label(self.review_notice, foreground='#744600')
+        self.review_text.pack(side='left')
+        self.review_button = ttk.Button(self.review_notice, text='! Review untagged photos',
+            style='Identify.TButton', command=self.show_untagged)
+        self.review_button.pack(side='left', padx=12)
         options = ttk.Frame(root, padding=(28, 10))
         options.pack(fill='x')
         ttk.Label(options, text='Main subject only · Smaller background faces are ignored').pack(side='left')
@@ -86,6 +96,11 @@ class App:
         self.poll_timer = root.after(100, self.poll)
         root.protocol('WM_DELETE_WINDOW', self.close)
 
+    def show_untagged(self):
+        self.show_all()
+        self.untagged_only = True
+        self.render()
+
     def show_all(self):
         self.show_people()
         self.show_hidden = False
@@ -112,6 +127,7 @@ class App:
                                  if hidden else 'Person restored to People.'))
 
     def show_people(self):
+        self.untagged_only = False
         self.all_view = False
         self.selected = None
         self.page = 0
@@ -146,13 +162,18 @@ class App:
         photos, faces = self.store.counts()
         summary = self.store.summary()
         self.stats.config(text=f"{summary['total']} photos scanned = {summary['with_faces']} with saved faces + {summary['without_faces']} without saved faces\n{visible_count} people groups · {summary['visible_faces']} saved face appearances · {summary['hidden_faces']} hidden appearances. A photo can include multiple people.")
+        missing = summary['without_faces']
+        self.review_text.config(text=f'{missing} photo' + ('s' if missing != 1 else '') + ' without saved face tags. Someone familiar may have been missed.')
+        self.review_button.config(state='normal' if missing and not self.busy else 'disabled')
         self.hidden_button.config(text='Show people' if self.show_hidden else 'Hidden people')
         for button in (self.name_button, self.merge_button):
             button.config(state='normal' if self.selected is not None and not self.busy and not self.show_hidden else 'disabled')
         if self.all_view:
-            self.heading.config(text='All photos')
+            self.heading.config(text='Untagged photos' if self.untagged_only else 'All photos')
             self.search_box.config(state='disabled')
             rows = self.store.all_photos()
+            if self.untagged_only:
+                rows = [row for row in rows if not self.store.photo_labels(row['id'])]
         elif self.selected is None:
             self.heading.config(text='Hidden people' if self.show_hidden else 'People')
             self.search_box.config(state='normal')
@@ -190,7 +211,8 @@ class App:
                 image = self.thumbnail(row['path'], (200, 150))
                 action = lambda p=row['path'], i=row['id']: self.edit_photo(i,p)
                 name = Path(row['path']).name
-                detail = 'Tagged: ' + (', '.join(self.store.photo_labels(row['id'])) or 'No one yet')
+                labels = self.store.photo_labels(row['id'])
+                detail = 'Tagged: ' + (', '.join(labels) or 'No one yet')
             tk.Button(card, image=image, command=action, relief='flat', bg='white', cursor='hand2').pack()
             tk.Label(card, text=name, bg='white', fg=INK, font=('Segoe UI', 11, 'bold'), wraplength=190).pack(pady=(9, 3))
             tk.Label(card, text=detail, bg='white', fg='#686f81', font=('Segoe UI', 9), wraplength=190).pack()
@@ -199,7 +221,11 @@ class App:
                     command=lambda p=row['id'], h=not self.show_hidden: self.hide_person(p, h),
                     state='disabled' if self.busy else 'normal').pack(pady=(8, 0))
             if self.selected is not None or self.all_view:
-                ttk.Button(card, text='Choose faces', command=lambda p=row['path'], i=row['id']: self.edit_photo(i,p),
+                if not labels:
+                    tk.Label(card, text='A familiar face may have been missed. Select a face to tell us who it is.',
+                        bg='white', fg='#744600', font=('Segoe UI',9), wraplength=190).pack(pady=(8,0))
+                ttk.Button(card, text='Choose faces' if labels else '! Identify someone',
+                    style='TButton' if labels else 'Identify.TButton', command=lambda p=row['path'], i=row['id']: self.edit_photo(i,p),
                     state='disabled' if self.busy else 'normal').pack(pady=(8,0))
                 ttk.Button(card, text='Open original', command=lambda p=row['path']:self.open_photo(p)).pack(pady=(4,0))
             if self.selected is not None:

@@ -124,3 +124,7 @@ Open a person group and click **Use face as group thumbnail** beneath the desire
 photo. This uses that group's saved face crop from the photo and persists across
 restarts and rescans. A merge keeps the destination group's thumbnail. Selecting
 a different photo changes it again.
+
+Photos without saved tags show **! Identify someone** in All photos. The button
+opens the face editor so you can select a missed face and assign an existing person
+or create a new one. The prompt disappears once a face tag is saved.
