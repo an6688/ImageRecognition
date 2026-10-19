@@ -44,6 +44,8 @@ class App:
         ttk.Label(header, text='Your people, together.').pack(side='left', padx=20)
         self.scan_button = ttk.Button(header, text='+  Add photo folder', style='Accent.TButton', command=self.start_scan)
         self.scan_button.pack(side='right')
+        self.photo_button = ttk.Button(header, text='+  Add photo', command=lambda: self.start_scan(single=True))
+        self.photo_button.pack(side='right', padx=8)
         self.stats = ttk.Label(root, padding=(28, 0), wraplength=1050)
         self.stats.pack(anchor='w')
         self.review_notice = ttk.Frame(root, padding=(28, 8))
@@ -115,24 +117,26 @@ class App:
         FaceEditor(self,photo,path)
 
     def toggle_hidden(self):
-        self.show_hidden = not self.show_hidden
-        self.show_people()
+        self.show_people(hidden=not self.show_hidden)
 
     def hide_person(self, person, hidden=True):
         if self.busy:
             return
         self.store.set_hidden(person, hidden)
-        self.show_people()
+        self.show_people(hidden=self.show_hidden)
         self.status.config(text=('Person hidden. Matching faces on future scans stay hidden. Restore from Hidden people.'
                                  if hidden else 'Person restored to People.'))
 
-    def show_people(self):
+    def show_people(self, hidden=False):
+        self.show_hidden = hidden
         self.untagged_only = False
         self.all_view = False
         self.selected = None
         self.page = 0
         self.search.set('')
         self.render()
+        self.canvas.update_idletasks()
+        self.canvas.yview_moveto(0)
 
     def person(self, person):
         self.selected = person
@@ -157,6 +161,10 @@ class App:
         for child in self.content.winfo_children():
             child.destroy()
         self.images.clear()
+        if self.selected is not None or self.all_view or self.show_hidden:
+            self.back.pack(side='left', before=self.heading)
+        else:
+            self.back.pack_forget()
         people = self.store.people(hidden=self.show_hidden)
         visible_count = len(self.store.people())
         photos, faces = self.store.counts()
@@ -295,15 +303,24 @@ class App:
         self.render()
         self.status.config(text='Face moved into a new unnamed group. Find it under People.')
 
-    def start_scan(self, refresh=False):
+    def start_scan(self, refresh=False, single=False):
         if self.busy:
             return
-        folder = None if refresh else filedialog.askdirectory(title='Select a photo folder')
-        if not refresh and not folder:
-            return
+        folder, paths = None, None
+        if single:
+            filename = filedialog.askopenfilename(title='Select a photo', filetypes=[
+                ('Photos', '*.jpg *.jpeg *.png *.webp *.bmp *.tif *.tiff'), ('All files', '*.*')])
+            if not filename:
+                return
+            paths = [Path(filename)]
+        elif not refresh:
+            folder = filedialog.askdirectory(title='Select a photo folder')
+            if not folder:
+                return
         self.busy = True
         self.cancel.clear()
         self.scan_button.config(state='disabled')
+        self.photo_button.config(state='disabled')
         self.refresh_button.config(state='disabled')
         self.cancel_button.pack(side='right')
         self.progress.start()
@@ -314,7 +331,7 @@ class App:
                 progress = lambda text: self.events.put(('progress', text))
                 indexer = Indexer(progress)
                 result = (indexer.refresh_library(progress, self.cancel) if refresh
-                          else indexer.scan(folder, progress, self.cancel))
+                          else indexer.scan(folder, progress, self.cancel, paths=paths))
                 self.events.put(('done', result))
             except Exception as exc:
                 self.events.put(('error', str(exc)))
@@ -333,6 +350,7 @@ class App:
                 else:
                     self.busy = False
                     self.scan_button.config(state='normal')
+                    self.photo_button.config(state='normal')
                     self.refresh_button.config(state='normal')
                     self.cancel_button.pack_forget()
                     self.progress.stop()
