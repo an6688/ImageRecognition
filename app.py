@@ -22,6 +22,7 @@ class App:
         self.events = queue.Queue()
         self.cancel = threading.Event()
         self.busy = False
+        self.all_view = False
         self.show_hidden = False
         self.selected = None
         self.page = 0
@@ -40,7 +41,7 @@ class App:
         ttk.Label(header, text='Your people, together.').pack(side='left', padx=20)
         self.scan_button = ttk.Button(header, text='+  Add photo folder', style='Accent.TButton', command=self.start_scan)
         self.scan_button.pack(side='right')
-        self.stats = ttk.Label(root, padding=(28, 0))
+        self.stats = ttk.Label(root, padding=(28, 0), wraplength=1050)
         self.stats.pack(anchor='w')
         options = ttk.Frame(root, padding=(28, 10))
         options.pack(fill='x')
@@ -49,6 +50,7 @@ class App:
         self.refresh_button.pack(side='right')
         self.hidden_button = ttk.Button(options, text='Hidden people', command=self.toggle_hidden)
         self.hidden_button.pack(side='right', padx=8)
+        ttk.Button(options,text='All photos',command=self.show_all).pack(side='right',padx=8)
         bar = ttk.Frame(root, padding=(28, 18))
         bar.pack(fill='x')
         self.back = ttk.Button(bar, text='← People', command=self.show_people)
@@ -81,8 +83,21 @@ class App:
         self.progress = ttk.Progressbar(root, mode='indeterminate')
         self.progress.pack(fill='x')
         self.show_people()
-        root.after(100, self.poll)
+        self.poll_timer = root.after(100, self.poll)
         root.protocol('WM_DELETE_WINDOW', self.close)
+
+    def show_all(self):
+        self.show_people()
+        self.show_hidden = False
+        self.all_view = True
+        self.render()
+
+    def edit_photo(self, photo, path):
+        if self.busy:
+            messagebox.showinfo('Scan in progress','Wait for the scan to finish before editing faces.')
+            return
+        from editor import FaceEditor
+        FaceEditor(self,photo,path)
 
     def toggle_hidden(self):
         self.show_hidden = not self.show_hidden
@@ -97,6 +112,7 @@ class App:
                                  if hidden else 'Person restored to People.'))
 
     def show_people(self):
+        self.all_view = False
         self.selected = None
         self.page = 0
         self.search.set('')
@@ -128,11 +144,16 @@ class App:
         people = self.store.people(hidden=self.show_hidden)
         visible_count = len(self.store.people())
         photos, faces = self.store.counts()
-        self.stats.config(text=f'{photos:,} photos indexed    ·    {visible_count:,} people groups    ·    {faces:,} faces found')
+        summary = self.store.summary()
+        self.stats.config(text=f"{summary['total']} photos scanned = {summary['with_faces']} with saved faces + {summary['without_faces']} without saved faces\n{visible_count} people groups · {summary['visible_faces']} saved face appearances · {summary['hidden_faces']} hidden appearances. A photo can include multiple people.")
         self.hidden_button.config(text='Show people' if self.show_hidden else 'Hidden people')
         for button in (self.name_button, self.merge_button):
             button.config(state='normal' if self.selected is not None and not self.busy and not self.show_hidden else 'disabled')
-        if self.selected is None:
+        if self.all_view:
+            self.heading.config(text='All photos')
+            self.search_box.config(state='disabled')
+            rows = self.store.all_photos()
+        elif self.selected is None:
             self.heading.config(text='Hidden people' if self.show_hidden else 'People')
             self.search_box.config(state='normal')
             rows = [p for p in people if self.search.get().lower() in (p['name'] or f'Person {p["id"]}').lower()]
@@ -160,31 +181,49 @@ class App:
         for i, row in enumerate(rows[start:start + 24]):
             card = tk.Frame(grid, background='white', padx=12, pady=14)
             card.grid(row=i // 4, column=i % 4, padx=7, pady=7, sticky='nsew')
-            if self.selected is None:
-                image = self.thumbnail(self.store.thumbs / row['thumb'], (150, 150))
+            if self.selected is None and not self.all_view:
+                image = self.thumbnail(self.store.thumbs / (row['thumb'] or 'missing.jpg'), (150, 150))
                 action = lambda p=row['id']: self.person(p)
                 name = row['name'] or f'Person {row["id"]}'
                 detail = f'{row["count"]:,} photo' + ('s' if row['count'] != 1 else '')
             else:
                 image = self.thumbnail(row['path'], (200, 150))
-                action = lambda p=row['path']: self.open_photo(p)
+                action = lambda p=row['path'], i=row['id']: self.edit_photo(i,p)
                 name = Path(row['path']).name
-                detail = 'Click image to open original'
+                detail = 'Tagged: ' + (', '.join(self.store.photo_labels(row['id'])) or 'No one yet')
             tk.Button(card, image=image, command=action, relief='flat', bg='white', cursor='hand2').pack()
             tk.Label(card, text=name, bg='white', fg=INK, font=('Segoe UI', 11, 'bold'), wraplength=190).pack(pady=(9, 3))
-            tk.Label(card, text=detail, bg='white', fg='#686f81', font=('Segoe UI', 9)).pack()
-            if self.selected is None:
+            tk.Label(card, text=detail, bg='white', fg='#686f81', font=('Segoe UI', 9), wraplength=190).pack()
+            if self.selected is None and not self.all_view:
                 ttk.Button(card, text='Remember this person' if self.show_hidden else "Don't remember this person",
                     command=lambda p=row['id'], h=not self.show_hidden: self.hide_person(p, h),
                     state='disabled' if self.busy else 'normal').pack(pady=(8, 0))
+            if self.selected is not None or self.all_view:
+                ttk.Button(card, text='Choose faces', command=lambda p=row['path'], i=row['id']: self.edit_photo(i,p),
+                    state='disabled' if self.busy else 'normal').pack(pady=(8,0))
+                ttk.Button(card, text='Open original', command=lambda p=row['path']:self.open_photo(p)).pack(pady=(4,0))
+            if self.selected is not None:
+                ttk.Button(card, text='Use face as group thumbnail',
+                    command=lambda f=row['face_id']: self.set_group_cover(f),
+                    state='disabled' if self.busy else 'normal').pack(pady=(4,0))
             if self.selected is not None and not self.show_hidden:
-                ttk.Button(card, text='Different person', command=lambda f=row['face_id']: self.separate(f),
+                ttk.Button(card, text='Move saved face to new group', command=lambda f=row['face_id']: self.separate(f),
                     state='disabled' if self.busy else 'normal').pack(pady=(8, 0))
         pager = ttk.Frame(self.content, padding=15)
         pager.pack()
         ttk.Button(pager, text='Previous', command=lambda: self.change_page(-1), state='normal' if self.page else 'disabled').pack(side='left')
         ttk.Label(pager, text=f'  {start + 1}–{min(start + 24, len(rows))} of {len(rows)}  ').pack(side='left')
         ttk.Button(pager, text='Next', command=lambda: self.change_page(1), state='normal' if start + 24 < len(rows) else 'disabled').pack(side='left')
+
+    def set_group_cover(self, face):
+        if self.busy or self.selected is None:
+            return
+        try:
+            self.store.set_cover(self.selected, face)
+            self.status.config(text='Group thumbnail updated. Return to People to see it.')
+            self.render()
+        except (OSError, ValueError) as exc:
+            messagebox.showerror('Cannot update thumbnail', str(exc))
 
     def change_page(self, delta):
         self.page += delta
@@ -282,13 +321,14 @@ class App:
                     self.render()
         except queue.Empty:
             pass
-        self.root.after(100, self.poll)
+        self.poll_timer = self.root.after(100, self.poll)
 
     def close(self):
         if self.busy:
             self.cancel.set()
             self.status.config(text='Stopping after the current photo; close again when the scan finishes.')
             return
+        self.root.after_cancel(self.poll_timer)
         self.store.close()
         self.root.destroy()
 

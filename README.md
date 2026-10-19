@@ -92,3 +92,35 @@ hidden group. Those examples survive subject-filter rescans even if all its inde
 faces are removed. Recognition remains approximate; a sufficiently different-looking
 face can still create a new group. Hide acts on one group, not all existing lookalike
 groups. Changes are disabled during scans.
+
+## Milestone 2: choose people yourself
+
+Click **All photos** to browse every indexed image, including photos with no saved
+faces. Click a photo or **Choose faces** to open the editor. Click a green detected
+face box, or drag a rectangle around a missed face. Choose an existing person
+(including named groups with zero photos), or enter a name for a new person, and
+save. This adds Mom alongside Ani; it does not replace the other person.
+
+Manual selections are retained across rescans of unchanged image content. Selecting
+the same face again updates its assignment. If a drawn crop cannot be recognized,
+it is still saved as a manual photo tag, but is not used to recognize future photos.
+If an original's image content changes, rescanning reports it and preserves existing
+manual selections; restore the original or import the changed image at a new path.
+
+The header separates photos scanned, photos with/without saved faces, and saved
+face appearances (including a separate hidden count). A photo can have multiple
+people, so person photo counts need not add up to total photos. Named empty groups
+remain available. **Move saved face to new group** moves the existing indexed face;
+use **Choose faces** to select a different face in the picture.
+
+## Photo names and group thumbnails
+
+Photo cards and the face editor list everyone tagged in the photo, including hidden
+people (marked hidden) and unnamed groups (shown as Person N). The editor labels
+saved face boxes when their position is available or can be matched exactly to a
+current detection; the full name list remains visible even when a box cannot be located.
+
+Open a person group and click **Use face as group thumbnail** beneath the desired
+photo. This uses that group's saved face crop from the photo and persists across
+restarts and rescans. A merge keeps the destination group's thumbnail. Selecting
+a different photo changes it again.
