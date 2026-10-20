@@ -13,6 +13,24 @@ MODEL_NAME = 'yolo11m.pt'
 MODEL_SHA256 = 'd5ffc1a674953a08e11a8d21e022781b1b23a19b730afc309290bd9fb5305b95'
 MODEL_URL = 'https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11m.pt'
 CLASSES = {15: 'cat', 16: 'dog'}
+BACKENDS = ('PyTorch', 'ONNX')
+ONNX_VERSION = 'yolo11m-onnx-fp32-square640-conf50-v1'
+
+
+def load_backend(folder):
+    try:
+        value=json.loads((Path(folder)/'pet-settings.json').read_text())['backend']
+        return value if value in BACKENDS else 'PyTorch'
+    except (OSError,ValueError,KeyError,TypeError):return 'PyTorch'
+
+
+def save_backend(folder,backend):
+    if backend not in BACKENDS:raise ValueError('Unknown pet engine')
+    target=Path(folder)/'pet-settings.json'
+    temporary=target.with_suffix('.tmp')
+    temporary.write_text(json.dumps({'backend':backend}),encoding='utf-8')
+    os.replace(temporary,target)
+
 
 
 def prepare_pet_model(progress=lambda _: None):
@@ -68,9 +86,56 @@ class PetDetector:
         return decode_detections(output)
 
 
-def scan_pets(store,progress,cancelled,detector_factory=PetDetector):
+class OnnxPetDetector:
+    """FP32 CPU inference with the same square preprocessing as the ONNX benchmark."""
+    def __init__(self,progress=lambda _:None):
+        path=ROOT/'models'/'yolo11m.onnx'
+        if not path.is_file():
+            raise RuntimeError('ONNX model missing. Run benchmarks/export_onnx.py first, or select PyTorch.')
+        try:
+            import onnxruntime as ort
+        except ImportError as exc:
+            raise RuntimeError('Install benchmarks/requirements-onnx.txt first, or select PyTorch.') from exc
+        config=ROOT/'data'/'yolo-config'
+        config.mkdir(parents=True,exist_ok=True)
+        os.environ['YOLO_CONFIG_DIR']=str(config)
+        from ultralytics import settings
+        settings.update({'sync':False})
+        options=ort.SessionOptions()
+        options.intra_op_num_threads=8
+        options.inter_op_num_threads=1
+        options.execution_mode=ort.ExecutionMode.ORT_SEQUENTIAL
+        progress('Loading ONNX pet engine…')
+        self.session=ort.InferenceSession(str(path),sess_options=options,providers=['CPUExecutionProvider'])
+        inputs=self.session.get_inputs();outputs=self.session.get_outputs()
+        if len(inputs)!=1 or inputs[0].shape!=[1,3,640,640] or inputs[0].type!='tensor(float)' or len(outputs)!=1 or outputs[0].shape!=[1,84,8400]:
+            raise ValueError('Unexpected ONNX model. Re-export with benchmarks/export_onnx.py.')
+        self.input_name=inputs[0].name
+
+    def detect(self,path):
+        import torch
+        from ultralytics.data.augment import LetterBox
+        from ultralytics.utils import ops,nms
+        with Image.open(path) as source:
+            image=np.asarray(ImageOps.exif_transpose(source).convert('RGB'))
+        padded=LetterBox(new_shape=(640,640),auto=False)(image=image)
+        tensor=np.ascontiguousarray(padded.transpose(2,0,1)[None],dtype=np.float32)/255.0
+        raw=self.session.run(None,{self.input_name:tensor})[0]
+        boxes=nms.non_max_suppression(torch.from_numpy(raw),conf_thres=.5,iou_thres=.7,
+            classes=list(CLASSES),max_det=300)[0]
+        if not len(boxes):return []
+        boxes[:,:4]=ops.scale_boxes((640,640),boxes[:,:4],image.shape[:2])
+        output=boxes.numpy().copy()
+        output[:,:4]/=np.array([image.shape[1],image.shape[0],image.shape[1],image.shape[0]])
+        return decode_detections(output)
+
+
+def scan_pets(store,progress,cancelled,detector_factory=None,*,backend='PyTorch'):
+    if backend not in BACKENDS:raise ValueError('Unknown pet engine')
+    version=VERSION if backend=='PyTorch' else ONNX_VERSION
+    if detector_factory is None:detector_factory=PetDetector if backend=='PyTorch' else OnnxPetDetector
     pending=store.db.execute("""SELECT p.* FROM photos p LEFT JOIN pet_scans s ON s.photo_id=p.id
-        WHERE s.photo_id IS NULL OR s.digest<>p.digest OR s.version<>? ORDER BY p.id""",(VERSION,)).fetchall()
+        WHERE s.photo_id IS NULL OR s.digest<>p.digest OR s.version<>? ORDER BY p.id""",(version,)).fetchall()
     result=dict(processed=0,detections=0,errors=[],cancelled=False)
     if not pending or cancelled.is_set():
         result['cancelled']=cancelled.is_set()
@@ -90,7 +155,7 @@ def scan_pets(store,progress,cancelled,detector_factory=PetDetector):
                 store.db.executemany('INSERT INTO pets(photo_id,species,confidence,box) VALUES(?,?,?,?)',
                     [(photo['id'],kind,confidence,json.dumps(box)) for kind,confidence,box in detections])
                 store.db.execute('INSERT OR REPLACE INTO pet_scans(photo_id,digest,version) VALUES(?,?,?)',
-                    (photo['id'],digest,VERSION))
+                    (photo['id'],digest,version))
             result['processed']+=1;result['detections']+=len(detections)
         except Exception as exc:result['errors'].append(f"{Path(photo['path']).name}: {exc}")
     return result

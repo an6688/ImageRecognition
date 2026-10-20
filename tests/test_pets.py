@@ -26,6 +26,45 @@ class PetTests(unittest.TestCase):
             def detect(self,path):return [('cat',.9,[.1,.1,.3,.3]),('dog',.8,[.5,.1,.3,.3]),('dog',.7,[.5,.5,.3,.3])]
         return Detector()
 
+    def test_backend_switch_rescans_and_preserves_rejections(self):
+        scan_pets(self.store,lambda _:None,threading.Event(),self.factory)
+        self.store.reject_pet(1,'cat')
+        result=scan_pets(self.store,lambda _:None,threading.Event(),self.factory,backend='ONNX')
+        self.assertEqual(result['processed'],1)
+        self.assertEqual(self.store.pet_counts(),{'cat':0,'dog':1})
+        scan_pets(self.store,lambda _:None,threading.Event(),lambda _:self.fail('cached'),backend='ONNX')
+        self.assertEqual(scan_pets(self.store,lambda _:None,threading.Event(),self.factory)['processed'],1)
+        self.assertEqual(self.store.rejected_pets(1),['cat'])
+
+    def test_backend_initialization_failure_keeps_previous_results(self):
+        scan_pets(self.store,lambda _:None,threading.Event(),self.factory)
+        before=[tuple(r) for r in self.store.pet_detections(1)]
+        with self.assertRaisesRegex(RuntimeError,'missing'):
+            scan_pets(self.store,lambda _:None,threading.Event(),
+                lambda _:(_ for _ in ()).throw(RuntimeError('missing')),backend='ONNX')
+        self.assertEqual(before,[tuple(r) for r in self.store.pet_detections(1)])
+        self.assertEqual(scan_pets(self.store,lambda _:None,threading.Event(),self.factory,backend='ONNX')['processed'],1)
+
+    def test_backend_selector_persists_and_is_captured_by_worker(self):
+        from pets import load_backend
+        folder=self.store.folder
+        with patch.object(app,'Store',lambda *args:Store(folder)):
+            root=tk.Tk();ui=app.App(root)
+            try:
+                self.assertEqual(ui.pet_backend.get(),'PyTorch')
+                ui.pet_backend.set('ONNX');ui.change_pet_backend()
+                self.assertEqual(load_backend(folder),'ONNX')
+                with patch('pets.scan_pets',return_value=dict(processed=0,errors=[],cancelled=False)) as scan:
+                    ui.start_scan(pets_only=True);ui.worker.join(timeout=5)
+                    self.assertFalse(ui.worker.is_alive())
+                    self.assertEqual(scan.call_args.kwargs['backend'],'ONNX')
+                    self.assertEqual(str(ui.pet_engine['state']),'disabled')
+                    root.after_cancel(ui.poll_timer)
+                    ui.poll()
+                    self.assertEqual(str(ui.pet_engine['state']),'readonly')
+            finally:
+                ui.busy=False;ui.close()
+
     def test_filter_confidence_species_and_invalid_boxes(self):
         data=np.array([[-.1,0,.5,1,.9,15],[0,0,1,1,.3,16],[0,0,1,1,.99,0],[.8,0,.2,1,.8,16]])
         detections=decode_detections(data)

@@ -265,3 +265,31 @@ For unattended use:
 ```
 
 Measured results and limitations are recorded in [ONNX experiment notes](benchmarks/onnx-results.md).
+
+### Select the app's pet engine
+
+Restart the app, then use **Pet engine** beside the Cats/Dogs controls to choose
+**PyTorch** or **ONNX**. PyTorch remains the initial default. Your choice is saved
+locally and used for subsequent imports and pet scans. Click **Find pets in
+existing photos** to update the current library with the selected engine.
+Switching engines invalidates the pet scan cache; your rejected cat/dog tags and
+human tags remain intact. The selector is disabled while a scan is running.
+
+ONNX requires the optional dependencies and exported model described above.
+If either is missing, the scan reports an actionable error and keeps previous
+results. It does not silently fall back to another engine. The ONNX adapter uses
+8 CPU inference threads and fixed 640x640 aspect-preserving padding. PyTorch
+retains its existing minimum rectangular padding; predictions can therefore
+occasionally differ on other photos. Neither backend identifies individual pets.
+
+The app adapter was checked against the saved square ONNX reference on all 50
+benchmark photos: categories and box counts matched, and confidence/coordinates
+matched within absolute tolerance 0.00001. To repeat that integration check:
+
+```powershell
+.venv\Scripts\python benchmarks/verify_onnx_backend.py data/benchmarks/<onnx-run-folder>
+```
+
+This checks image and model hashes before comparing. The separate regression suite
+also covers cache switching, saved engine preferences, rejection preservation and
+initialization failures. No video or tracking mode has been added yet.

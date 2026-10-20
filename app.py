@@ -7,6 +7,7 @@ from tkinter import ttk, filedialog, simpledialog, messagebox
 from pathlib import Path
 from PIL import Image, ImageOps, ImageTk
 from core import Store, Indexer
+from pets import BACKENDS, load_backend, save_backend
 
 BG = '#f4f5f8'
 INK = '#202638'
@@ -73,6 +74,12 @@ class App:
         self.dog_button.pack(side='left',padx=8)
         self.pet_scan_button = ttk.Button(pet_bar,text='Find pets in existing photos',command=lambda:self.start_scan(pets_only=True))
         self.pet_scan_button.pack(side='left')
+        ttk.Label(pet_bar,text='Pet engine').pack(side='left',padx=(16,6))
+        self.pet_backend=tk.StringVar(value=load_backend(self.store.folder))
+        self.pet_engine=ttk.Combobox(pet_bar,textvariable=self.pet_backend,values=BACKENDS,
+            state='readonly',width=10)
+        self.pet_engine.pack(side='left')
+        self.pet_engine.bind('<<ComboboxSelected>>',self.change_pet_backend)
         bar = ttk.Frame(root, padding=(28, 18))
         bar.pack(fill='x')
         self.back = ttk.Button(bar, text='← People', command=self.show_people)
@@ -107,6 +114,15 @@ class App:
         self.show_people()
         self.poll_timer = root.after(100, self.poll)
         root.protocol('WM_DELETE_WINDOW', self.close)
+
+    def change_pet_backend(self,event=None):
+        try:
+            save_backend(self.store.folder,self.pet_backend.get())
+        except OSError as exc:
+            self.pet_backend.set(load_backend(self.store.folder))
+            messagebox.showerror('Could not save pet engine',str(exc))
+            return
+        self.status.config(text=f"{self.pet_backend.get()} selected. Click Find pets in existing photos to rescan; corrections are kept.")
 
     def show_pets(self,kind):
         self.show_all()
@@ -358,6 +374,8 @@ class App:
             folder = filedialog.askdirectory(title='Select a photo folder')
             if not folder:
                 return
+        backend=self.pet_backend.get()
+        self.pet_engine.config(state='disabled')
         self.busy = True
         self.cancel.clear()
         self.scan_button.config(state='disabled')
@@ -382,7 +400,7 @@ class App:
                               else indexer.scan(folder, progress, self.cancel, paths=paths))
                 try:
                     from pets import scan_pets
-                    pets=scan_pets(pet_store,progress,self.cancel)
+                    pets=scan_pets(pet_store,progress,self.cancel,backend=backend)
                     result['pet_photos']=pets['processed']
                     result['errors'].extend(pets['errors'])
                     result['cancelled']=result['cancelled'] or pets['cancelled']
@@ -405,6 +423,7 @@ class App:
                     self.status.config(text=value)
                 else:
                     self.busy = False
+                    self.pet_engine.config(state='readonly')
                     self.scan_button.config(state='normal')
                     self.photo_button.config(state='normal')
                     self.pet_scan_button.config(state='normal')
