@@ -84,6 +84,49 @@ class Store:
             self.db.execute('ALTER TABLE people ADD COLUMN cover_thumb TEXT')
             self.db.commit()
 
+        self.db.executescript("""
+            CREATE TABLE IF NOT EXISTS pets(
+                id INTEGER PRIMARY KEY, photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+                species TEXT NOT NULL CHECK(species IN ('cat','dog')), confidence REAL NOT NULL, box TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS pets_photo ON pets(photo_id);
+            CREATE TABLE IF NOT EXISTS pet_scans(photo_id INTEGER PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,
+                digest TEXT NOT NULL, version TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS pet_rejections(
+                photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+                species TEXT NOT NULL CHECK(species IN ('cat','dog')), digest TEXT NOT NULL,
+                PRIMARY KEY(photo_id,species));
+            CREATE VIEW IF NOT EXISTS visible_pets AS
+                SELECT t.* FROM pets t JOIN photos p ON p.id=t.photo_id
+                WHERE NOT EXISTS (SELECT 1 FROM pet_rejections r
+                    WHERE r.photo_id=t.photo_id AND r.species=t.species AND r.digest=p.digest);
+        """)
+
+    def reject_pet(self, photo, species, rejected=True):
+        if species not in ('cat','dog'):
+            raise ValueError('Choose cat or dog')
+        row=self.db.execute('SELECT digest FROM photos WHERE id=?',(photo,)).fetchone()
+        if row is None:raise ValueError('Photo no longer exists')
+        with self.db:
+            if rejected:
+                self.db.execute('INSERT OR REPLACE INTO pet_rejections(photo_id,species,digest) VALUES(?,?,?)',
+                                (photo,species,row['digest']))
+            else:
+                self.db.execute('DELETE FROM pet_rejections WHERE photo_id=? AND species=?',(photo,species))
+
+    def rejected_pets(self, photo):
+        return [row[0] for row in self.db.execute("""SELECT r.species FROM pet_rejections r
+            JOIN photos p ON p.id=r.photo_id WHERE r.photo_id=? AND r.digest=p.digest ORDER BY r.species""",(photo,))]
+
+    def pet_counts(self):
+        return {kind: self.db.execute('SELECT COUNT(DISTINCT photo_id) FROM visible_pets WHERE species=?',(kind,)).fetchone()[0]
+                for kind in ('cat','dog')}
+
+    def pet_photos(self,kind):
+        return self.db.execute('SELECT DISTINCT p.id,p.path FROM photos p JOIN visible_pets t ON t.photo_id=p.id WHERE t.species=? ORDER BY p.id DESC',(kind,)).fetchall()
+
+    def pet_detections(self,photo):
+        return self.db.execute('SELECT * FROM visible_pets WHERE photo_id=? ORDER BY id',(photo,)).fetchall()
+
     def close(self):
         self.db.close()
 
@@ -363,6 +406,9 @@ class Indexer:
                         store.db.execute('DELETE FROM faces WHERE photo_id=? AND manual=0', (old['id'],))
                         prototypes = store.prototypes()
                     if old:
+                        if old['digest'] != digest:
+                            store.db.execute('DELETE FROM pets WHERE photo_id=?',(old['id'],))
+                            store.db.execute('DELETE FROM pet_scans WHERE photo_id=?',(old['id'],))
                         photo = old['id']
                         store.db.execute('UPDATE photos SET digest=?,size=?,modified=?,selection_version=1 WHERE id=?',
                                          (digest,stat.st_size,stat.st_mtime_ns,photo))

@@ -22,6 +22,14 @@ class FaceEditor:
         self.tags.pack(fill='x')
         self.canvas = tk.Canvas(self.window, width=850, height=500, background='#202638', highlightthickness=0)
         self.canvas.pack(padx=12)
+        pet_controls = ttk.Frame(self.window,padding=(12,8))
+        pet_controls.pack(fill='x')
+        for kind in sorted({r['species'] for r in app.store.pet_detections(photo)}):
+            ttk.Button(pet_controls,text=f'No {kind} in this photo',
+                command=lambda k=kind:self.correct_pet(k,True)).pack(side='left',padx=4)
+        for kind in app.store.rejected_pets(photo):
+            ttk.Button(pet_controls,text=f'Undo: no {kind}',
+                command=lambda k=kind:self.correct_pet(k,False)).pack(side='left',padx=4)
         controls = ttk.Frame(self.window, padding=12); controls.pack(fill='x')
         self.people = app.store.db.execute("SELECT id,name FROM people WHERE hidden=0 ORDER BY name,id").fetchall()
         self.picker = ttk.Combobox(controls, state='readonly', width=30,
@@ -66,10 +74,16 @@ class FaceEditor:
                     item=self.canvas.create_text(tx,ty,text=label,anchor='nw',fill='white',font=('Segoe UI',10,'bold'))
                     background=self.canvas.create_rectangle(self.canvas.bbox(item),fill='#202638',outline='')
                     self.canvas.tag_raise(item,background)
+            for pet in self.app.store.pet_detections(self.photo):
+                x,y,w,h=json.loads(pet['box'])
+                x*=self.image.width;w*=self.image.width;y*=self.image.height;h*=self.image.height
+                self.canvas.create_rectangle(x*self.scale,y*self.scale,(x+w)*self.scale,(y+h)*self.scale,outline='#7fc9ff',width=3)
+                self.canvas.create_text(x*self.scale,max(0,y*self.scale-20),anchor='nw',fill='#7fc9ff',
+                    text=f"{pet['species'].title()} {pet['confidence']:.0%}",font=('Segoe UI',11,'bold'))
             self.canvas.bind('<ButtonPress-1>',self.press)
             self.canvas.bind('<B1-Motion>',self.drag)
             self.canvas.bind('<ButtonRelease-1>',self.release)
-            self.note.config(text='Green boxes: detected faces. Gold boxes: saved manual selections. Choose an existing person or enter a new name.')
+            self.note.config(text='Green: faces. Gold: saved faces. Blue: detected pets. Choose an existing person or enter a new name.')
         except Exception as exc:
             self.note.config(text=f'Could not load photo: {exc}')
 
@@ -125,6 +139,10 @@ class FaceEditor:
             self.close()
         except Exception as exc:
             messagebox.showerror('Could not save selection',str(exc),parent=self.window)
+
+    def correct_pet(self, species, rejected):
+        self.app.reject_pet(self.photo,species,rejected)
+        self.close()
 
     def close(self):
         self.window.after_cancel(self.load_timer)

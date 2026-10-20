@@ -36,8 +36,8 @@ Photos are EXIF-oriented and downscaled to 1600 pixels before detection. Faces
 smaller than 24 pixels at that scale are ignored. SQLite stores original paths,
 content hashes, face embeddings and person names; cropped face thumbnails live in
 `data/faces/`. Models live in `models/`. Both locations are excluded from Git.
-All photo processing is local. The only network operation is initial model download
-from OpenCV's GitHub repository (roughly 40 MB).
+All photo processing is local. Network access is used for initial face and pet model downloads.
+Photo inference stays on your computer.
 
 ## Current boundaries
 
@@ -128,3 +128,67 @@ a different photo changes it again.
 Photos without saved tags show **! Identify someone** in All photos. The button
 opens the face editor so you can select a missed face and assign an existing person
 or create a new one. The prompt disappears once a face tag is saved.
+
+## Cats and dogs
+
+New imports also run local pet detection. Click **Cats** or **Dogs** to browse
+virtual galleries (original files are not moved). Counts are unique photos, not
+animal counts: one photo with two dogs counts once; a cat-and-dog photo belongs
+to both galleries. Open a photo to see blue pet bounding boxes with model scores.
+
+Use **Find pets in existing photos** to analyze previously indexed photos. This
+pass does not modify face assignments, names, covers, or manual selections.
+Successful results, including no-pet results, are cached by image digest and model
+version. Errors remain retryable; stopping preserves completed work. The first
+pet scan after an import also checks any pending photos already in the library.
+
+The model detects the categories cat and dog, not individual pet identities.
+Small, obscured, or unusual poses may be missed and false detections are possible.
+Scores are model confidence, not calibrated probabilities. Detection uses a 0.5
+confidence cutoff. Use **No cat in this photo** or **No dog in this photo** to correct false detections.
+
+### Pet model provenance
+
+The app now uses [Ultralytics YOLO11 Medium](https://docs.ultralytics.com/models/yolo11/),
+with official `yolo11m.pt` weights from the v8.3.0 assets release, verified by SHA-256
+in `pets.py`. Ultralytics software and model usage follow its AGPL-3.0 / enterprise
+licensing options; see [Ultralytics licensing](https://www.ultralytics.com/license).
+The approximately 41 MB model downloads once. Inference is local on CPU, using
+640-pixel input with aspect-preserving letterboxing and a 0.50 confidence cutoff.
+Model scores are not calibrated probabilities. Images are never uploaded; optional
+Ultralytics sync is disabled and runtime settings live inside ignored `data/`.
+
+Restart the app and click **Find pets in existing photos** after upgrading. Cached
+results from the previous MobileNet-SSD version are automatically rechecked. Each
+photo's pet results are replaced transactionally; human face assignments are untouched.
+Run setup.ps1 on a fresh checkout to install the added Ultralytics/PyTorch dependencies.
+
+### Detector comparison
+
+The old MobileNet-SSD implementation is preserved in `benchmarks/legacy_detector.py`.
+Run `.venv\Scripts\python.exe benchmarks/compare_pets.py --model yolo11m.pt <dog-photo-paths>`
+to compare at the same 0.50 cutoff. It adds three upstream pet controls and two
+non-pet controls, then saves outputs under ignored `data/pet-evaluation/`. Personal
+photos and their paths are not committed. Alternate weights must already be in models/.
+
+In the development smoke comparison, the old detector missed all three supplied
+Newfoundland photos. YOLO11 Medium detected dogs in two (scores 0.892 and 0.868),
+correctly detected the animals in the three pet controls, and returned no pets in
+two non-pet controls. The darkest close-up remains a miss. Nano/Small missed a dog
+in the mixed-pet control; Extra Large misclassified the dark close-up as a cat and
+missed the control cat. Medium was selected from this limited comparison.
+
+These are development examples, including two near-duplicate photos, not an
+independent accuracy benchmark. Broader held-out evaluation is still needed. No
+threshold was tuned to force the dark close-up into Dogs, and no model was trained.
+
+### Correct false pet detections
+
+Photo cards and the editor have **No cat in this photo** / **No dog in this photo**
+actions. These reject that species for the entire photo, immediately updating gallery
+membership, counts, labels and boxes. Other species and human tags are unchanged.
+Rejections are stored separately from model output and survive rescans and model
+upgrades for unchanged photo content. If the image content changes, the old rejection
+no longer applies. From All photos, open the editor and click **Undo: no cat/dog**
+to restore model detections. Corrections do not retrain the detector or generalize
+to other photos of similar clothing.

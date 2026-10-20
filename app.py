@@ -23,6 +23,7 @@ class App:
         self.cancel = threading.Event()
         self.busy = False
         self.untagged_only = False
+        self.pet_kind = None
         self.all_view = False
         self.show_hidden = False
         self.selected = None
@@ -63,6 +64,15 @@ class App:
         self.hidden_button = ttk.Button(options, text='Hidden people', command=self.toggle_hidden)
         self.hidden_button.pack(side='right', padx=8)
         ttk.Button(options,text='All photos',command=self.show_all).pack(side='right',padx=8)
+        pet_bar = ttk.Frame(root, padding=(28, 0))
+        pet_bar.pack(fill='x')
+        ttk.Label(pet_bar,text='Pets').pack(side='left',padx=(0,12))
+        self.cat_button = ttk.Button(pet_bar,text='Cats',command=lambda:self.show_pets('cat'))
+        self.cat_button.pack(side='left')
+        self.dog_button = ttk.Button(pet_bar,text='Dogs',command=lambda:self.show_pets('dog'))
+        self.dog_button.pack(side='left',padx=8)
+        self.pet_scan_button = ttk.Button(pet_bar,text='Find pets in existing photos',command=lambda:self.start_scan(pets_only=True))
+        self.pet_scan_button.pack(side='left')
         bar = ttk.Frame(root, padding=(28, 18))
         bar.pack(fill='x')
         self.back = ttk.Button(bar, text='← People', command=self.show_people)
@@ -98,6 +108,13 @@ class App:
         self.poll_timer = root.after(100, self.poll)
         root.protocol('WM_DELETE_WINDOW', self.close)
 
+    def show_pets(self,kind):
+        self.show_all()
+        self.pet_kind=kind
+        self.render()
+        self.canvas.update_idletasks()
+        self.canvas.yview_moveto(0)
+
     def show_untagged(self):
         self.show_all()
         self.untagged_only = True
@@ -128,6 +145,7 @@ class App:
                                  if hidden else 'Person restored to People.'))
 
     def show_people(self, hidden=False):
+        self.pet_kind = None
         self.show_hidden = hidden
         self.untagged_only = False
         self.all_view = False
@@ -165,6 +183,9 @@ class App:
             self.back.pack(side='left', before=self.heading)
         else:
             self.back.pack_forget()
+        counts = self.store.pet_counts()
+        self.cat_button.config(text=f"Cats ({counts['cat']})")
+        self.dog_button.config(text=f"Dogs ({counts['dog']})")
         people = self.store.people(hidden=self.show_hidden)
         visible_count = len(self.store.people())
         photos, faces = self.store.counts()
@@ -180,6 +201,9 @@ class App:
             self.heading.config(text='Untagged photos' if self.untagged_only else 'All photos')
             self.search_box.config(state='disabled')
             rows = self.store.all_photos()
+            if self.pet_kind:
+                self.heading.config(text='Cats' if self.pet_kind=='cat' else 'Dogs')
+                rows=self.store.pet_photos(self.pet_kind)
             if self.untagged_only:
                 rows = [row for row in rows if not self.store.photo_labels(row['id'])]
         elif self.selected is None:
@@ -191,6 +215,10 @@ class App:
             self.heading.config(text=(person['name'] or f'Person {person["id"]}') if person else 'Empty group')
             self.search_box.config(state='disabled')
             rows = self.store.photos(self.selected)
+        if not rows and self.pet_kind:
+            ttk.Label(self.content,text='No ' + ('cats' if self.pet_kind=='cat' else 'dogs') + ' detected yet',font=('Segoe UI',22,'bold')).pack(pady=(55,15))
+            ttk.Label(self.content,text='Add a photo or use Find pets in existing photos. Detection can miss small or obscured animals.').pack()
+            return
         if not rows:
             title = ('No hidden people' if self.show_hidden else ('Meet the people in your photos' if not photos else 'No matching people here'))
             ttk.Label(self.content, text=title, font=('Segoe UI', 22, 'bold')).pack(pady=(65, 15))
@@ -220,7 +248,9 @@ class App:
                 action = lambda p=row['path'], i=row['id']: self.edit_photo(i,p)
                 name = Path(row['path']).name
                 labels = self.store.photo_labels(row['id'])
-                detail = 'Tagged: ' + (', '.join(labels) or 'No one yet')
+                pet_labels=sorted({r['species'].title() for r in self.store.pet_detections(row['id'])})
+                detail = 'Tagged: ' + (', '.join(labels) or 'No people yet')
+                if pet_labels: detail += '\nPets: ' + ', '.join(pet_labels)
             tk.Button(card, image=image, command=action, relief='flat', bg='white', cursor='hand2').pack()
             tk.Label(card, text=name, bg='white', fg=INK, font=('Segoe UI', 11, 'bold'), wraplength=190).pack(pady=(9, 3))
             tk.Label(card, text=detail, bg='white', fg='#686f81', font=('Segoe UI', 9), wraplength=190).pack()
@@ -229,12 +259,16 @@ class App:
                     command=lambda p=row['id'], h=not self.show_hidden: self.hide_person(p, h),
                     state='disabled' if self.busy else 'normal').pack(pady=(8, 0))
             if self.selected is not None or self.all_view:
-                if not labels:
+                if not labels and not pet_labels:
                     tk.Label(card, text='A familiar face may have been missed. Select a face to tell us who it is.',
                         bg='white', fg='#744600', font=('Segoe UI',9), wraplength=190).pack(pady=(8,0))
-                ttk.Button(card, text='Choose faces' if labels else '! Identify someone',
-                    style='TButton' if labels else 'Identify.TButton', command=lambda p=row['path'], i=row['id']: self.edit_photo(i,p),
+                ttk.Button(card, text='View photo / tags' if pet_labels else ('Choose faces' if labels else '! Identify someone'),
+                    style='TButton' if labels or pet_labels else 'Identify.TButton', command=lambda p=row['path'], i=row['id']: self.edit_photo(i,p),
                     state='disabled' if self.busy else 'normal').pack(pady=(8,0))
+                for kind in sorted({r['species'] for r in self.store.pet_detections(row['id'])}):
+                    ttk.Button(card,text=f'No {kind} in this photo',
+                        command=lambda p=row['id'],k=kind:self.reject_pet(p,k),
+                        state='disabled' if self.busy else 'normal').pack(pady=(4,0))
                 ttk.Button(card, text='Open original', command=lambda p=row['path']:self.open_photo(p)).pack(pady=(4,0))
             if self.selected is not None:
                 ttk.Button(card, text='Use face as group thumbnail',
@@ -248,6 +282,13 @@ class App:
         ttk.Button(pager, text='Previous', command=lambda: self.change_page(-1), state='normal' if self.page else 'disabled').pack(side='left')
         ttk.Label(pager, text=f'  {start + 1}–{min(start + 24, len(rows))} of {len(rows)}  ').pack(side='left')
         ttk.Button(pager, text='Next', command=lambda: self.change_page(1), state='normal' if start + 24 < len(rows) else 'disabled').pack(side='left')
+
+    def reject_pet(self, photo, species, rejected=True):
+        if self.busy:return
+        self.store.reject_pet(photo,species,rejected)
+        self.render()
+        self.status.config(text=(f'Photo excluded from {species.title()}s. This correction survives rescans. Undo in View photo / tags from All photos.'
+                                 if rejected else f'{species.title()} detection restored.'))
 
     def set_group_cover(self, face):
         if self.busy or self.selected is None:
@@ -303,7 +344,7 @@ class App:
         self.render()
         self.status.config(text='Face moved into a new unnamed group. Find it under People.')
 
-    def start_scan(self, refresh=False, single=False):
+    def start_scan(self, refresh=False, single=False, pets_only=False):
         if self.busy:
             return
         folder, paths = None, None
@@ -313,7 +354,7 @@ class App:
             if not filename:
                 return
             paths = [Path(filename)]
-        elif not refresh:
+        elif not refresh and not pets_only:
             folder = filedialog.askdirectory(title='Select a photo folder')
             if not folder:
                 return
@@ -321,23 +362,38 @@ class App:
         self.cancel.clear()
         self.scan_button.config(state='disabled')
         self.photo_button.config(state='disabled')
+        self.pet_scan_button.config(state='disabled')
         self.refresh_button.config(state='disabled')
         self.cancel_button.pack(side='right')
         self.progress.start()
         self.render()
         def work():
             indexer = None
+            pet_store = None
             try:
                 progress = lambda text: self.events.put(('progress', text))
-                indexer = Indexer(progress)
-                result = (indexer.refresh_library(progress, self.cancel) if refresh
-                          else indexer.scan(folder, progress, self.cancel, paths=paths))
+                if pets_only:
+                    pet_store = Store(self.store.folder)
+                    result = dict(imported=0,skipped=0,faces=0,errors=[],cancelled=False)
+                else:
+                    indexer = Indexer(progress, data=self.store.folder)
+                    pet_store = indexer.store
+                    result = (indexer.refresh_library(progress, self.cancel) if refresh
+                              else indexer.scan(folder, progress, self.cancel, paths=paths))
+                try:
+                    from pets import scan_pets
+                    pets=scan_pets(pet_store,progress,self.cancel)
+                    result['pet_photos']=pets['processed']
+                    result['errors'].extend(pets['errors'])
+                    result['cancelled']=result['cancelled'] or pets['cancelled']
+                except Exception as exc:
+                    result['errors'].append('Pet detection: ' + str(exc))
                 self.events.put(('done', result))
             except Exception as exc:
                 self.events.put(('error', str(exc)))
             finally:
-                if indexer:
-                    indexer.store.close()
+                if pet_store is not None:
+                    pet_store.close()
         self.worker = threading.Thread(target=work, daemon=True)
         self.worker.start()
 
@@ -351,6 +407,7 @@ class App:
                     self.busy = False
                     self.scan_button.config(state='normal')
                     self.photo_button.config(state='normal')
+                    self.pet_scan_button.config(state='normal')
                     self.refresh_button.config(state='normal')
                     self.cancel_button.pack_forget()
                     self.progress.stop()
@@ -359,7 +416,7 @@ class App:
                         messagebox.showerror('Scan failed', value)
                     else:
                         prefix = 'Stopped' if value['cancelled'] else 'Finished'
-                        self.status.config(text=f"{prefix} · {value['imported']} photos processed · {value['faces']} faces · {value['skipped']} unchanged/duplicate photos skipped · {len(value['errors'])} errors")
+                        self.status.config(text=f"{prefix} · {value['imported']} photos processed · {value['faces']} faces · {value.get('pet_photos',0)} checked for pets · {value['skipped']} unchanged/duplicate photos skipped · {len(value['errors'])} errors")
                         if value['errors']:
                             messagebox.showwarning('Some photos could not be read', '\n'.join(value['errors'][:10]))
                     self.render()

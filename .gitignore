@@ -3,3 +3,9 @@ __pycache__/
 data/
 models/*.onnx
 *.log
+
+models/*.caffemodel
+models/*.download
+models/deploy.prototxt
+models/*.pt
+Ultralytics/
