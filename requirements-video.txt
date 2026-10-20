@@ -1,0 +1,4 @@
+# Optional recorded-video demo dependencies, alongside app requirements.
+onnx==1.19.0
+onnxruntime==1.23.0
+lap==0.5.12

@@ -293,3 +293,58 @@ matched within absolute tolerance 0.00001. To repeat that integration check:
 This checks image and model hashes before comparing. The separate regression suite
 also covers cache switching, saved engine preferences, rejection preservation and
 initialization failures. No video or tracking mode has been added yet.
+
+## Recorded vehicle tracking demo
+
+Double-click **Video Tracking.bat**, or click **Video tracking** at the bottom of
+the photo app. Choose a local video with **Open video**. This is a separate window
+and process: it never imports video frames into the photo library. **Stop** finishes
+the current frame and saves partial output. Closing waits for that cleanup.
+
+Install optional dependencies on a new machine:
+
+```powershell
+.venv\Scripts\python -m pip install -r requirements-video.txt
+.venv\Scripts\python benchmarks/export_onnx.py
+```
+
+The demo uses ONNX Medium at 640x640 and BoT-SORT with sparse optical-flow camera
+motion compensation, without appearance re-identification. It tracks cars,
+motorcycles, buses and trucks. Lower-score detections (0.10+) can support existing
+tracks, while new tracks require 0.25+. Each video starts a fresh tracker.
+
+The **Detection view** dropdown rotates only the model input. Output boxes are
+mapped back to the original video coordinates. The default is 90 degrees
+counterclockwise for the supplied overhead road clip. Use **Original** for ordinary
+views. The original overhead view produced very weak vehicle detections; rotating
+it improved the initial detections without changing weights or lowering thresholds.
+This choice was developed on this clip, not validated on unseen drone footage.
+
+The pipeline analyzes up to 10 frames per source second, in sequence. At 60 fps
+this means every sixth frame. No analyzed frames are dropped to make inference
+look faster. The live preview can skip display updates to keep memory bounded.
+**Processing FPS** is measured work throughput; **Analysis FPS** is the selected
+sampling rate. Preview runs as fast as processing permits, not necessarily in real
+time. The saved MP4 uses the sampling rate to retain source playback pace (within
+one sample interval), with no audio. Variable-frame-rate input is approximated by
+the frame rate reported by OpenCV.
+
+Each run creates an ignored `data/videos/<timestamp>/` folder containing:
+
+- `annotated.mp4`: upright video with boxes, IDs and speed overlay.
+- `tracks.jsonl`: source frame numbers/times and per-frame tracked boxes.
+  Rows are `[x1,y1,x2,y2,track_id,confidence,class_id,detection_index]` in source pixels.
+- `summary.json`: source/sample rates, timing, settings and completion/cancellation.
+- `error.txt` only if processing failed; other files in that run may be incomplete.
+
+Track IDs are temporary labels, not known vehicle identities or a reliable count
+of unique vehicles. Occlusions, detector misses, class changes and camera motion
+can split or switch IDs. Parked vehicles are included. No tracking accuracy metric
+is claimed until frames/identities are labeled. Timing excludes model loading but
+includes decode, detection, tracking, drawing, output and preview callbacks.
+
+For reproducible command-line processing:
+
+```powershell
+.venv\Scripts\python video_tracking.py "C:\path\to\video.mp4" --rotation 90 --analysis-fps 10
+```

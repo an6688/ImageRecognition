@@ -1,5 +1,7 @@
 """PhotoPeople — local desktop photo organizer."""
 import os
+import subprocess
+import sys
 import queue
 import threading
 import tkinter as tk
@@ -108,6 +110,8 @@ class App:
         bottom.pack(fill='x')
         self.status = ttk.Label(bottom, text='Local library · Your originals stay untouched', wraplength=800)
         self.status.pack(side='left')
+        ttk.Button(bottom,text='Video tracking',command=lambda:subprocess.Popen(
+            [sys.executable,str(Path(__file__).with_name('video_app.py'))])).pack(side='right')
         self.cancel_button = ttk.Button(bottom, text='Stop scan', command=self.cancel.set)
         self.progress = ttk.Progressbar(root, mode='indeterminate')
         self.progress.pack(fill='x')

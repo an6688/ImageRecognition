@@ -105,7 +105,7 @@ class OnnxPetDetector:
         options.intra_op_num_threads=8
         options.inter_op_num_threads=1
         options.execution_mode=ort.ExecutionMode.ORT_SEQUENTIAL
-        progress('Loading ONNX pet engine…')
+        progress('Loading ONNX detector…')
         self.session=ort.InferenceSession(str(path),sess_options=options,providers=['CPUExecutionProvider'])
         inputs=self.session.get_inputs();outputs=self.session.get_outputs()
         if len(inputs)!=1 or inputs[0].shape!=[1,3,640,640] or inputs[0].type!='tensor(float)' or len(outputs)!=1 or outputs[0].shape!=[1,84,8400]:
@@ -113,21 +113,25 @@ class OnnxPetDetector:
         self.input_name=inputs[0].name
 
     def detect(self,path):
+        with Image.open(path) as source:
+            image=np.asarray(ImageOps.exif_transpose(source).convert('RGB'))
+        output=self.detect_rgb(image,list(CLASSES),confidence=.5)
+        output[:,:4]/=np.array([image.shape[1],image.shape[0],image.shape[1],image.shape[0]])
+        return decode_detections(output)
+
+    def detect_rgb(self,image,classes,confidence=.5):
+        """Return pixel xyxy/confidence/class rows for an RGB image."""
         import torch
         from ultralytics.data.augment import LetterBox
         from ultralytics.utils import ops,nms
-        with Image.open(path) as source:
-            image=np.asarray(ImageOps.exif_transpose(source).convert('RGB'))
         padded=LetterBox(new_shape=(640,640),auto=False)(image=image)
         tensor=np.ascontiguousarray(padded.transpose(2,0,1)[None],dtype=np.float32)/255.0
         raw=self.session.run(None,{self.input_name:tensor})[0]
-        boxes=nms.non_max_suppression(torch.from_numpy(raw),conf_thres=.5,iou_thres=.7,
-            classes=list(CLASSES),max_det=300)[0]
-        if not len(boxes):return []
+        boxes=nms.non_max_suppression(torch.from_numpy(raw),conf_thres=confidence,iou_thres=.7,
+            classes=classes,max_det=300)[0]
+        if not len(boxes):return np.empty((0,6),dtype=np.float32)
         boxes[:,:4]=ops.scale_boxes((640,640),boxes[:,:4],image.shape[:2])
-        output=boxes.numpy().copy()
-        output[:,:4]/=np.array([image.shape[1],image.shape[0],image.shape[1],image.shape[0]])
-        return decode_detections(output)
+        return boxes.numpy().copy()
 
 
 def scan_pets(store,progress,cancelled,detector_factory=None,*,backend='PyTorch'):
