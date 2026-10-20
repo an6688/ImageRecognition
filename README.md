@@ -192,3 +192,76 @@ upgrades for unchanged photo content. If the image content changes, the old reje
 no longer applies. From All photos, open the editor and click **Undo: no cat/dog**
 to restore model detections. Corrections do not retrain the detector or generalize
 to other photos of similar clothing.
+
+## Repeatable folder benchmark
+
+`benchmarks/benchmark_folder.py <folder> --labels <labels.json> --repeats 3`
+benchmarks the current pet detector without importing images into the app library.
+The labels JSON maps filename prefixes (trailing digits removed) to category lists,
+for example `{"dog":["dog"],"cat":["cat"],"negative":[]}` for dog1.jpg, cat1.jpg,
+and negative1.jpg. Every image must have a label; unknown prefixes stop the run.
+Labels describe category presence, not the number of animals.
+
+Each run writes a hashed image manifest, per-image predictions/timings, and summary
+JSON into an isolated timestamped folder under ignored `data/benchmarks/`. Model
+startup and three warm-up calls are measured separately. Each measured pass uses
+a seeded shuffle of the same image set. Per-photo timing separates image decode,
+EXIF orientation/RGB conversion, prediction wall time, and result filtering.
+Ultralytics preprocess, inference, and postprocess timings are nested diagnostics
+inside prediction wall time, not additional costs. Mean, median and p95 timings
+are reported. Accuracy uses the first pass only; prediction changes across passes
+are flagged. Reports record runtime versions, model hash, settings and CPU threads.
+
+This is a warm CPU **pet-only** baseline; it excludes face recognition, file hashing,
+database/UI work and report serialization. File caching can affect decode timings.
+It is not an embedded-device benchmark or a held-out accuracy evaluation. Keep
+separate held-out images when tuning against the development collection.
+
+### Compare model sizes
+
+Pass `--model yolo11m.pt`, `--model yolo11s.pt`, or `--model yolo11n.pt` to the
+folder benchmark. Each model file must already exist in `models/`. The report
+records the selected file's SHA-256 and size. Input resolution (640), confidence
+cutoff (0.50), CPU execution, seeded image order, and repeat count stay fixed.
+Run models sequentially to avoid concurrent inference skewing the comparison.
+`--compact` prints a short console summary; full JSON is always saved.
+This experiment does not change the app's default model or library.
+
+### Compare PyTorch with ONNX Runtime
+
+Install optional tools with `.venv\Scripts\python -m pip install -r benchmarks/requirements-onnx.txt`,
+then run `.venv\Scripts\python benchmarks/export_onnx.py`. This exports the verified
+Medium checkpoint to `models/yolo11m.onnx`: FP32, fixed batch 1, fixed 640x640,
+opset 17, without embedded NMS or slimming. ONNX's checker validates the result.
+The export explicitly selects the legacy PyTorch exporter expected by Ultralytics
+8.3.203. The application continues to use its existing PyTorch model.
+
+Run the folder benchmark twice, sequentially, with the same folder and labels:
+add `--model yolo11m.pt --square --compact` for the control and
+`--model yolo11m.onnx --square --compact` for ONNX. Both use the same Ultralytics
+preprocessing, square letterboxing, FP32 CPU execution, confidence cutoff, and
+postprocessing. PyTorch and ONNX Runtime each use 8 intra-op threads and 1 inter-op
+thread; ONNX executes sequentially. A temporary session-constructor override sets
+these options during initialization, including its I/O bindings, and is removed
+before measured passes. This override is confined to the benchmark process.
+
+Use this new square PyTorch control when comparing runtimes. Earlier default
+benchmarks use minimum rectangular padding, which changes the inference workload.
+Startup is split between wrapper creation and the warm-up block: backend session
+initialization is lazy and is included in warm-up, not per-photo timings. Model
+file size is reported separately; exporting to FP32 does not imply compression.
+
+### One-click benchmark comparison
+
+Double-click **Benchmark Pets.bat**, choose the photo folder, then its labels JSON
+(for the existing collection, select `data/benchmarks/labels.json`). It runs the
+PyTorch and ONNX square-input controls sequentially and prints each result folder.
+The optional ONNX dependencies must be installed first, as described above. A
+missing ONNX model is exported automatically. Closing either chooser cancels.
+For unattended use:
+
+```powershell
+.venv\Scripts\python benchmarks/run_comparison.py --folder "C:\path\to\photos" --labels "C:\path\to\labels.json"
+```
+
+Measured results and limitations are recorded in [ONNX experiment notes](benchmarks/onnx-results.md).
