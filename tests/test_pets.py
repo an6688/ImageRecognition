@@ -151,6 +151,6 @@ class PetTests(unittest.TestCase):
                 ui.back.invoke();root.update()
                 self.assertEqual(ui.heading.cget('text'),'People');self.assertIsNone(ui.pet_kind)
             finally:
-                root.after_cancel(ui.poll_timer);root.destroy()
+                root.after_cancel(ui.poll_timer);ui.video.dispose();root.destroy()
 
 if __name__=='__main__':unittest.main()

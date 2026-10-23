@@ -8,6 +8,78 @@ import numpy as np
 import video_tracking as video
 
 class VideoTests(unittest.TestCase):
+    def test_pause_can_resume_or_cancel_without_changing_selection(self):
+        import time
+        control=video.TrackingControl();cancel=threading.Event()
+        control.select(12);control.paused.set()
+        results=[];thread=threading.Thread(target=lambda:results.append(control.wait(cancel)))
+        thread.start();time.sleep(.06);self.assertTrue(thread.is_alive())
+        control.paused.clear();thread.join(timeout=1)
+        self.assertFalse(thread.is_alive());self.assertGreater(results[0],.04)
+        control.paused.set();cancel.set();control.wait(cancel)
+        self.assertEqual(control.selection(),12)
+
+    def test_click_maps_letterboxed_preview_and_retains_lost_id(self):
+        import tkinter as tk
+        from types import SimpleNamespace
+        from video_app import VideoApp
+        root=tk.Tk();root.geometry('850x900');ui=VideoApp(root)
+        try:
+            root.update()
+            ui.latest=(np.zeros((400,200,3),dtype=np.uint8),{'source_shape':(800,400),'subject':'Dogs',
+                'tracks':[[100,200,200,400,7,.9,16,0],[120,220,160,300,9,.8,16,1]]})
+            ui.render();ox,oy,sx,sy=ui.mapping
+            ui.click(SimpleNamespace(x=ox+140*sx,y=oy+250*sy))
+            self.assertEqual(ui.control.selection(),9)  # smallest overlapping box
+            ui.click(SimpleNamespace(x=0,y=0))
+            self.assertEqual(ui.control.selection(),9)  # background does not retarget
+            ui.latest=(ui.latest[0],{'source_shape':(800,400),'tracks':[]})
+            ui.render();self.assertIn('lost',ui.selection['text'])
+            self.assertEqual(ui.control.selection(),9)
+            ui.select(None);self.assertIsNone(ui.control.selection())
+        finally:ui.dispose();root.destroy()
+
+    def test_main_app_embeds_both_workspaces(self):
+        import tkinter as tk
+        import app
+        from core import Store
+        with tempfile.TemporaryDirectory() as folder,patch.object(app,'Store',lambda:Store(folder)):
+            root=tk.Tk();ui=app.App(root)
+            try:
+                self.assertEqual([ui.tabs.tab(t,'text') for t in ui.tabs.tabs()],['Photos','Videos'])
+                self.assertIs(ui.video.root,ui.video_page)
+                ui.tabs.select(ui.video_page);root.update()
+                self.assertTrue(ui.video.picture.winfo_ismapped())
+            finally:ui.close()
+
+    def test_subject_filter_and_selected_id_reach_output(self):
+        import json
+        seen=[]
+        class Detector:
+            def __init__(self,*args):pass
+            def detect_rgb(self,image,classes,**kwargs):
+                seen.append(classes)
+                return np.array([[10,10,40,40,.9,classes[0]]],dtype=np.float32)
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);source=root/'input.avi'
+            writer=cv2.VideoWriter(str(source),cv2.VideoWriter_fourcc(*'MJPG'),10,(64,64))
+            for _ in range(3):writer.write(np.zeros((64,64,3),dtype=np.uint8))
+            writer.release()
+            for subject,classes in video.SUBJECTS.items():
+                seen.clear();control=video.TrackingControl()
+                def preview(frame,info):
+                    self.assertEqual(info['subject'],subject)
+                    if info['tracks']:control.select(int(info['tracks'][0][4]))
+                with patch.object(video,'ROOT',root),patch.object(video,'OnnxPetDetector',Detector):
+                    run=video.process_video(source,subject=subject,control=control,preview=preview,progress=lambda _:None)
+                self.assertEqual(seen,[list(classes)]*3)
+                rows=[json.loads(line) for line in (run/'tracks.jsonl').read_text().splitlines()]
+                self.assertIsNone(rows[0]['selected_track_id'])
+                self.assertEqual(rows[1]['selected_track_id'],1)
+                summary=json.loads((run/'summary.json').read_text())
+                self.assertEqual(summary['subject'],subject)
+                self.assertEqual(summary['classes'],{str(k):v for k,v in classes.items()})
+
     def test_rotated_boxes_return_to_original_coordinates(self):
         expected=np.array([[10,20,40,60,.8,2]],dtype=np.float32)
         for rotation,coords in [(0,[10,20,40,60]),(90,[20,60,60,90]),
@@ -32,7 +104,7 @@ class VideoTests(unittest.TestCase):
                 root.after_cancel(ui.timer);ui.poll()
                 self.assertEqual(ui.output,'test-output')
                 self.assertEqual(str(ui.open['state']),'normal')
-                self.assertEqual(worker.call_args.kwargs['rotation'],90)
+                self.assertEqual(worker.call_args.kwargs['rotation'],0)
                 self.assertTrue(hasattr(ui,'image'))
         finally:
             root.after_cancel(ui.timer);root.destroy()

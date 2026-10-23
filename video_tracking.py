@@ -14,6 +14,31 @@ import numpy as np
 from pets import OnnxPetDetector,ROOT
 
 VEHICLES={2:'Car',3:'Motorcycle',5:'Bus',7:'Truck'}
+SUBJECTS={'Vehicles':VEHICLES,'Dogs':{16:'Dog'},'Cats':{15:'Cat'},'People':{0:'Person'}}
+
+class TrackingControl:
+    def __init__(self):
+        self.paused=threading.Event()
+        self.lock=threading.Lock()
+        self.selected=None
+
+    def select(self,identity):
+        with self.lock:self.selected=identity
+
+    def selection(self):
+        with self.lock:return self.selected
+
+    def wait(self,cancel):
+        started=time.perf_counter()
+        if not self.paused.is_set():return 0.0
+        while self.paused.is_set() and not cancel.wait(.05):pass
+        return time.perf_counter()-started
+
+
+def pick_track(tracks,x,y):
+    hits=[r for r in tracks if r[0]<=x<=r[2] and r[1]<=y<=r[3]]
+    return int(min(hits,key=lambda r:(r[2]-r[0])*(r[3]-r[1]))[4]) if hits else None
+
 
 def sampling(fps,target):
     if not math.isfinite(fps) or fps<=0:raise ValueError('Video has no usable frame rate.')
@@ -41,13 +66,15 @@ def restore_boxes(rows,shape,rotation):
     return out
 
 
-def draw_tracks(frame,tracks,source_time,processing_fps,analysis_fps):
+def draw_tracks(frame,tracks,source_time,processing_fps,analysis_fps,classes=None,selected=None):
+    classes=classes or VEHICLES
     for row in tracks:
         x1,y1,x2,y2,identity,confidence,kind=row[:7]
         identity=int(identity);color=((identity*67)%200+55,(identity*113)%200+55,(identity*37)%200+55)
         p1=(int(x1),int(y1));p2=(int(x2),int(y2))
-        cv2.rectangle(frame,p1,p2,color,2)
-        text=f'{VEHICLES.get(int(kind),"Vehicle")} #{identity} {confidence:.0%}'
+        if selected is not None:color=(0,255,255) if identity==selected else (130,130,130)
+        cv2.rectangle(frame,p1,p2,color,4 if identity==selected else 2)
+        text=f'{classes.get(int(kind),"Subject")} #{identity} {confidence:.0%}'
         cv2.putText(frame,text,(p1[0],max(20,p1[1]-6)),cv2.FONT_HERSHEY_SIMPLEX,.55,color,2)
     cv2.rectangle(frame,(0,0),(frame.shape[1],64),(25,25,25),-1)
     cv2.putText(frame,f'{source_time:.1f}s | Processing {processing_fps:.1f} FPS',
@@ -56,8 +83,10 @@ def draw_tracks(frame,tracks,source_time,processing_fps,analysis_fps):
         (12,51),cv2.FONT_HERSHEY_SIMPLEX,.6,(255,255,255),1)
     return frame
 
-def process_video(source,target_fps=10,cancel=None,preview=None,progress=print,rotation=0):
+def process_video(source,target_fps=10,cancel=None,preview=None,progress=print,rotation=0,subject='Vehicles',control=None):
     """Process sampled frames in order. Each invocation owns a fresh tracker."""
+    if subject not in SUBJECTS:raise ValueError('Unsupported subject type')
+    classes=SUBJECTS[subject];control=control or TrackingControl()
     if rotation not in (0,90,180,270):raise ValueError('Unsupported detection rotation')
     source=Path(source).resolve();cancel=cancel or threading.Event()
     capture=cv2.VideoCapture(str(source));writer=None;run=None
@@ -76,9 +105,11 @@ def process_video(source,target_fps=10,cancel=None,preview=None,progress=print,r
         run=ROOT/'data'/'videos'/datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
         run.mkdir(parents=True)
         index=0;processed=0;ids=set();first_shape=None;last_source_time=0
-        inference_seconds=0;tracking_seconds=0;started=time.perf_counter()
+        inference_seconds=0;tracking_seconds=0;paused_seconds=0;started=time.perf_counter()
         with (run/'tracks.jsonl').open('w',encoding='utf-8') as records:
-            while not cancel.is_set() and capture.grab():
+            while not cancel.is_set():
+                paused_seconds+=control.wait(cancel)
+                if cancel.is_set() or not capture.grab():break
                 current=index;index+=1
                 if current%stride:continue
                 ok,frame=capture.retrieve()
@@ -91,31 +122,33 @@ def process_video(source,target_fps=10,cancel=None,preview=None,progress=print,r
                 tick=time.perf_counter()
                 rgb=cv2.cvtColor(frame,cv2.COLOR_BGR2RGB)
                 rotated=np.ascontiguousarray(np.rot90(rgb,rotation//90))
-                detections=restore_boxes(detector.detect_rgb(rotated,list(VEHICLES),confidence=.1),frame.shape,rotation)
+                detections=restore_boxes(detector.detect_rgb(rotated,list(classes),confidence=.1),frame.shape,rotation)
                 inferred=time.perf_counter();inference_seconds+=inferred-tick
                 tracks=tracker.update(Boxes(detections,frame.shape[:2]),frame)
                 tracking_seconds+=time.perf_counter()-inferred
                 processed+=1;last_source_time=current/source_fps
                 ids.update(int(row[4]) for row in tracks)
-                records.write(json.dumps(dict(frame=current,seconds=last_source_time,tracks=tracks.tolist()))+'\n')
-                speed=processed/(time.perf_counter()-started)
-                draw_tracks(frame,tracks,last_source_time,speed,analysis_fps)
+                selected=control.selection()
+                records.write(json.dumps(dict(frame=current,seconds=last_source_time,tracks=tracks.tolist(),selected_track_id=selected))+'\n')
+                speed=processed/max(1e-9,time.perf_counter()-started-paused_seconds)
+                preview_frame=frame.copy() if preview else None
+                draw_tracks(frame,tracks,last_source_time,speed,analysis_fps,classes,selected)
                 writer.write(frame)
-                if preview:preview(frame,dict(processed=processed,source_seconds=last_source_time,
+                if preview:preview(preview_frame,dict(subject=subject,tracks=tracks.tolist(),source_shape=frame.shape[:2],processed=processed,source_seconds=last_source_time,
                     total_seconds=total/source_fps if total>0 else None,processing_fps=speed,analysis_fps=analysis_fps))
                 if processed%30==0:progress(f'{last_source_time:.1f}s analyzed | {speed:.1f} processing FPS')
-        elapsed=time.perf_counter()-started
+        elapsed=time.perf_counter()-started-paused_seconds
         if processed==0 and not cancel.is_set():raise ValueError('Video contains no decodable frames.')
         if total>0 and index<total-1 and not cancel.is_set():raise ValueError(f'Video ended early at frame {index} of {total}')
         summary=dict(source=str(source),source_fps=source_fps,source_frames_reported=total,
             analysis_fps=analysis_fps,stride=stride,processed_frames=processed,cancelled=cancel.is_set(),
-            elapsed_seconds=elapsed,processing_fps=processed/elapsed if elapsed else 0,
+            elapsed_seconds=elapsed,paused_seconds=paused_seconds,subject=subject,processing_fps=processed/elapsed if elapsed else 0,
             inference_seconds=inference_seconds,tracking_seconds=tracking_seconds,track_ids_seen=len(ids),
             tracker='BoT-SORT',camera_motion='sparseOptFlow',reidentification=False,
             model='yolo11m.onnx',model_sha256=model_hash,
             packages={p:importlib.metadata.version(p) for p in ('onnxruntime','ultralytics','lap')},
-            detection_rotation_ccw=rotation,classes=VEHICLES,detector_confidence=.1,new_track_confidence=.25,
-            note='Track IDs are clip-local, not identities or a reliable unique-vehicle count. Accuracy is not yet labeled. Timing excludes model initialization; includes decoding, drawing, output and preview callbacks.')
+            detection_rotation_ccw=rotation,classes=classes,detector_confidence=.1,new_track_confidence=.25,
+            note='Track IDs are clip-local, not identities or a reliable unique-vehicle count. Accuracy is not yet labeled. Timing excludes model initialization and user pauses; includes decoding, drawing, output and preview callbacks.')
         (run/'summary.json').write_text(json.dumps(summary,indent=2),encoding='utf-8')
         progress(f'{"Stopped" if cancel.is_set() else "Finished"}: {processed} frames; {summary["processing_fps"]:.1f} processing FPS')
         return run
@@ -130,5 +163,6 @@ if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('video',type=Path);parser.add_argument('--analysis-fps',type=float,default=10)
     parser.add_argument('--rotation',type=int,choices=[0,90,180,270],default=0,help='Rotate detector input counterclockwise; output stays upright')
+    parser.add_argument('--subject',choices=list(SUBJECTS),default='Vehicles')
     args=parser.parse_args()
-    print('OUTPUT_DIRECTORY='+str(process_video(args.video,args.analysis_fps,rotation=args.rotation)))
+    print('OUTPUT_DIRECTORY='+str(process_video(args.video,args.analysis_fps,rotation=args.rotation,subject=args.subject)))

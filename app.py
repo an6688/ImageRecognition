@@ -1,7 +1,5 @@
 """PhotoPeople — local desktop photo organizer."""
 import os
-import subprocess
-import sys
 import queue
 import threading
 import tkinter as tk
@@ -17,7 +15,7 @@ INK = '#202638'
 class App:
     def __init__(self, root):
         self.root = root
-        root.title('PhotoPeople — Your people, together')
+        root.title('ImageRecognition — Photos and Videos')
         root.geometry('1150x780')
         root.minsize(850, 580)
         root.configure(bg=BG)
@@ -42,7 +40,13 @@ class App:
         style.map('Accent.TButton', background=[('active', '#4842b8')])
         style.configure('Identify.TButton', background='#fff0ce', foreground='#744600')
         style.map('Identify.TButton', background=[('active', '#ffe0a0')])
-        header = ttk.Frame(root, padding=(28, 22))
+        self.tabs=ttk.Notebook(root)
+        self.tabs.pack(fill='both',expand=True)
+        self.photo_page=ttk.Frame(self.tabs);self.video_page=ttk.Frame(self.tabs)
+        self.tabs.add(self.photo_page,text='Photos');self.tabs.add(self.video_page,text='Videos')
+        from video_app import VideoApp
+        self.video=VideoApp(self.video_page,embedded=True)
+        header = ttk.Frame(self.photo_page, padding=(28, 22))
         header.pack(fill='x')
         ttk.Label(header, text='PhotoPeople', style='Title.TLabel').pack(side='left')
         ttk.Label(header, text='Your people, together.').pack(side='left', padx=20)
@@ -50,16 +54,16 @@ class App:
         self.scan_button.pack(side='right')
         self.photo_button = ttk.Button(header, text='+  Add photo', command=lambda: self.start_scan(single=True))
         self.photo_button.pack(side='right', padx=8)
-        self.stats = ttk.Label(root, padding=(28, 0), wraplength=1050)
+        self.stats = ttk.Label(self.photo_page, padding=(28, 0), wraplength=1050)
         self.stats.pack(anchor='w')
-        self.review_notice = ttk.Frame(root, padding=(28, 8))
+        self.review_notice = ttk.Frame(self.photo_page, padding=(28, 8))
         self.review_notice.pack(fill='x')
         self.review_text = ttk.Label(self.review_notice, foreground='#744600')
         self.review_text.pack(side='left')
         self.review_button = ttk.Button(self.review_notice, text='! Review untagged photos',
             style='Identify.TButton', command=self.show_untagged)
         self.review_button.pack(side='left', padx=12)
-        options = ttk.Frame(root, padding=(28, 10))
+        options = ttk.Frame(self.photo_page, padding=(28, 10))
         options.pack(fill='x')
         ttk.Label(options, text='Main subject only · Smaller background faces are ignored').pack(side='left')
         self.refresh_button = ttk.Button(options, text='Update existing photos', command=lambda: self.start_scan(refresh=True))
@@ -67,7 +71,7 @@ class App:
         self.hidden_button = ttk.Button(options, text='Hidden people', command=self.toggle_hidden)
         self.hidden_button.pack(side='right', padx=8)
         ttk.Button(options,text='All photos',command=self.show_all).pack(side='right',padx=8)
-        pet_bar = ttk.Frame(root, padding=(28, 0))
+        pet_bar = ttk.Frame(self.photo_page, padding=(28, 0))
         pet_bar.pack(fill='x')
         ttk.Label(pet_bar,text='Pets').pack(side='left',padx=(0,12))
         self.cat_button = ttk.Button(pet_bar,text='Cats',command=lambda:self.show_pets('cat'))
@@ -82,7 +86,7 @@ class App:
             state='readonly',width=10)
         self.pet_engine.pack(side='left')
         self.pet_engine.bind('<<ComboboxSelected>>',self.change_pet_backend)
-        bar = ttk.Frame(root, padding=(28, 18))
+        bar = ttk.Frame(self.photo_page, padding=(28, 18))
         bar.pack(fill='x')
         self.back = ttk.Button(bar, text='← People', command=self.show_people)
         self.back.pack(side='left')
@@ -96,8 +100,8 @@ class App:
         self.search_box = ttk.Entry(bar, textvariable=self.search, width=24)
         self.search_box.pack(side='right', padx=8)
         self.search.trace_add('write', lambda *_: self.render())
-        self.canvas = tk.Canvas(root, bg=BG, highlightthickness=0)
-        scroll = ttk.Scrollbar(root, orient='vertical', command=self.canvas.yview)
+        self.canvas = tk.Canvas(self.photo_page, bg=BG, highlightthickness=0)
+        scroll = ttk.Scrollbar(self.photo_page, orient='vertical', command=self.canvas.yview)
         scroll.pack(side='right', fill='y')
         self.canvas.pack(fill='both', expand=True, padx=(28, 8))
         self.canvas.configure(yscrollcommand=scroll.set)
@@ -105,15 +109,14 @@ class App:
         self.window = self.canvas.create_window((0, 0), window=self.content, anchor='nw')
         self.content.bind('<Configure>', lambda e: self.canvas.configure(scrollregion=self.canvas.bbox('all')))
         self.canvas.bind('<Configure>', lambda e: self.canvas.itemconfigure(self.window, width=e.width))
-        root.bind('<MouseWheel>', lambda e: self.canvas.yview_scroll(-int(e.delta / 120), 'units'))
-        bottom = ttk.Frame(root, padding=(28, 14))
+        root.bind('<MouseWheel>', lambda e: self.canvas.yview_scroll(-int(e.delta / 120), 'units') if self.tabs.select()==str(self.photo_page) else None)
+        bottom = ttk.Frame(self.photo_page, padding=(28, 14))
         bottom.pack(fill='x')
         self.status = ttk.Label(bottom, text='Local library · Your originals stay untouched', wraplength=800)
         self.status.pack(side='left')
-        ttk.Button(bottom,text='Video tracking',command=lambda:subprocess.Popen(
-            [sys.executable,str(Path(__file__).with_name('video_app.py'))])).pack(side='right')
+        ttk.Button(bottom,text='Videos',command=lambda:self.tabs.select(self.video_page)).pack(side='right')
         self.cancel_button = ttk.Button(bottom, text='Stop scan', command=self.cancel.set)
-        self.progress = ttk.Progressbar(root, mode='indeterminate')
+        self.progress = ttk.Progressbar(self.photo_page, mode='indeterminate')
         self.progress.pack(fill='x')
         self.show_people()
         self.poll_timer = root.after(100, self.poll)
@@ -448,10 +451,16 @@ class App:
         self.poll_timer = self.root.after(100, self.poll)
 
     def close(self):
+        if self.video.running():
+            self.video.close();self.cancel.set();self.tabs.select(self.video_page)
+            self.root.after(100,self.close)
+            return
         if self.busy:
             self.cancel.set()
             self.status.config(text='Stopping after the current photo; close again when the scan finishes.')
             return
+        self.progress.stop()
+        self.video.dispose()
         self.root.after_cancel(self.poll_timer)
         self.store.close()
         self.root.destroy()

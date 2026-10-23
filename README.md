@@ -292,14 +292,33 @@ matched within absolute tolerance 0.00001. To repeat that integration check:
 
 This checks image and model hashes before comparing. The separate regression suite
 also covers cache switching, saved engine preferences, rejection preservation and
-initialization failures. No video or tracking mode has been added yet.
+initialization failures. Video tracking is described below.
 
-## Recorded vehicle tracking demo
+## Video tracking inside ImageRecognition
 
-Double-click **Video Tracking.bat**, or click **Video tracking** at the bottom of
-the photo app. Choose a local video with **Open video**. This is a separate window
-and process: it never imports video frames into the photo library. **Stop** finishes
-the current frame and saves partial output. Closing waits for that cleanup.
+Open the normal app and select its **Videos** tab. **Photos** retains the existing
+photo library. Both workspaces now share one window and process; video analysis
+runs in a background thread. Video frames are never imported as photos.
+**Video Tracking.bat** remains an optional standalone launcher.
+
+Choose **Track: Vehicles / Dogs / Cats / People**, then **Open video**. The subject
+and rotation choices are fixed for that run. **Pause**, click a detected box to
+select it, then **Resume**. The selected track is highlighted in yellow while the
+other tracks remain visible. **Clear selection** returns to showing all tracks.
+Selection maps through the resized/letterboxed preview to original-frame boxes.
+When boxes overlap, the smallest box under the click is selected.
+
+If the selected ID disappears, the UI says **lost / not visible** and retains that
+ID; it does not intentionally select another track. The tracker itself can still
+switch identities. This follows a temporary track, not a named pet or person, and
+does not recognize a subject returning under a new ID. Click a visible box to
+reselect manually. Selection is reset for each new video.
+
+Selection highlights in the saved video apply to frames processed after the click;
+already-written frames are not rewritten. Each JSONL frame includes the selected
+track ID. After completion, clicking boxes only changes the remaining preview.
+**Stop** also works while paused and saves partial output. Closing the main window
+cancels video analysis and waits for its output file to finish.
 
 Install optional dependencies on a new machine:
 
@@ -309,14 +328,13 @@ Install optional dependencies on a new machine:
 ```
 
 The demo uses ONNX Medium at 640x640 and BoT-SORT with sparse optical-flow camera
-motion compensation, without appearance re-identification. It tracks cars,
-motorcycles, buses and trucks. Lower-score detections (0.10+) can support existing
+motion compensation, without appearance re-identification. The Vehicles option includes cars, motorcycles, buses and trucks; the other
+options select dogs, cats or people. Lower-score detections (0.10+) can support existing
 tracks, while new tracks require 0.25+. Each video starts a fresh tracker.
 
 The **Detection view** dropdown rotates only the model input. Output boxes are
-mapped back to the original video coordinates. The default is 90 degrees
-counterclockwise for the supplied overhead road clip. Use **Original** for ordinary
-views. The original overhead view produced very weak vehicle detections; rotating
+mapped back to the original video coordinates. The default is **Original**, suitable for ordinary pet/person footage. Choose
+**90 degrees counterclockwise** for the supplied overhead road clip. The original overhead view produced very weak vehicle detections; rotating
 it improved the initial detections without changing weights or lowering thresholds.
 This choice was developed on this clip, not validated on unseen drone footage.
 
@@ -340,11 +358,11 @@ Each run creates an ignored `data/videos/<timestamp>/` folder containing:
 Track IDs are temporary labels, not known vehicle identities or a reliable count
 of unique vehicles. Occlusions, detector misses, class changes and camera motion
 can split or switch IDs. Parked vehicles are included. No tracking accuracy metric
-is claimed until frames/identities are labeled. Timing excludes model loading but
+is claimed until frames/identities are labeled. Timing excludes model loading and user pause time but
 includes decode, detection, tracking, drawing, output and preview callbacks.
 
 For reproducible command-line processing:
 
 ```powershell
-.venv\Scripts\python video_tracking.py "C:\path\to\video.mp4" --rotation 90 --analysis-fps 10
+.venv\Scripts\python video_tracking.py "C:\path\to\video.mp4" --rotation 90 --analysis-fps 10 --subject Vehicles
 ```

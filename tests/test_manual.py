@@ -90,6 +90,6 @@ class ManualTests(unittest.TestCase):
                     self.assertEqual(self.store.counts(),(1,2))
             finally:
                 root.after_cancel(ui.poll_timer)
-                root.destroy()
+                ui.video.dispose();root.destroy()
 
 if __name__=='__main__':unittest.main()
