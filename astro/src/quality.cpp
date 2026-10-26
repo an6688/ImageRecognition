@@ -71,10 +71,17 @@ Quality measure_elongation(const Frame& frame, std::size_t peak_limit) {
         if (a.contrast != b.contrast) return a.contrast > b.contrast;
         return a.y != b.y ? a.y < b.y : a.x < b.x;
     });
+    // Accepted stars are bucketed in 2*radius cells, so the overlap test visits at most 9 cells instead of every star.
+    const int cell = 2 * radius, cells_x = (width + cell - 1) / cell, cells_y = (height + cell - 1) / cell;
+    std::vector<std::vector<std::size_t>> buckets(static_cast<std::size_t>(cells_x) * cells_y);
+    auto bucket_of = [&](int x, int y) { return static_cast<std::size_t>(y / cell) * cells_x + x / cell; };
     for (const auto& peak : peaks) {
         bool overlap = false;
-        for (const auto& star : result.stars)
-            if (std::hypot(star.x - peak.x, star.y - peak.y) < 2 * radius) { overlap = true; break; }
+        const int bx = peak.x / cell, by = peak.y / cell;
+        for (int gy = std::max(0, by - 1); gy <= std::min(cells_y - 1, by + 1) && !overlap; ++gy)
+            for (int gx = std::max(0, bx - 1); gx <= std::min(cells_x - 1, bx + 1) && !overlap; ++gx)
+                for (std::size_t i : buckets[static_cast<std::size_t>(gy) * cells_x + gx])
+                    if (std::hypot(result.stars[i].x - peak.x, result.stars[i].y - peak.y) < 2 * radius) { overlap = true; break; }
         if (overlap) { ++result.rejected; continue; }
         std::vector<double> ring;
         for (int dy = -radius; dy <= radius; ++dy) for (int dx = -radius; dx <= radius; ++dx)
@@ -116,6 +123,8 @@ Quality measure_elongation(const Frame& frame, std::size_t peak_limit) {
         const double ratio = major / minor;
         result.stars.push_back({peak.x + cx, peak.y + cy, major, minor,
             .5 * std::atan2(2 * xy, xx - yy) * 180 / pi, ratio, contrast, ratio >= elongation_threshold});
+        const auto& added = result.stars.back();
+        buckets[bucket_of(static_cast<int>(added.x), static_cast<int>(added.y))].push_back(result.stars.size() - 1);
     }
     if (!result.stars.empty()) {
         std::vector<double> ratios;
