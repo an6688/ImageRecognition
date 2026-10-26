@@ -1,0 +1,68 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>__TITLE__</title><style>
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#11171b;color:#e5edf1;font:16px/1.5 system-ui}main{max-width:1200px;margin:auto;padding:30px}h1{font-size:30px;margin:8px 0}h2{font-size:19px}p{max-width:95ch}.muted{color:#b4c4cd;font-size:14px}.controls{display:flex;gap:18px;flex-wrap:wrap;align-items:center;padding:18px 0}select,button,input{font:inherit}select,button{padding:9px;background:#25333c;color:inherit;border:1px solid #71828c}button{cursor:pointer}label{display:inline-flex;gap:8px;align-items:center}.views{display:grid;grid-template-columns:1fr 1fr;gap:20px}canvas{width:100%;height:auto;background:black;image-rendering:auto}figure{margin:0}figcaption{margin:8px 0;color:#c6d4dd}#timeline{width:100%}#status{color:#f4ce87}#frames label{display:flex;margin:6px 0}details{border-top:1px solid #42525c;margin-top:24px;padding-top:12px}@media(max-width:700px){main{padding:16px}.views{grid-template-columns:1fr}}
+</style><main><p class="muted">Astro Image Analyzer · experimental sequence preview</p><h1>__TITLE__</h1>
+<p>Move through aligned exposures, choose a comparison reference, and explore changes across the sequence. These views do not assign keep/discard decisions.</p>
+<p id="provenance" class="muted"></p><p id="status" role="status"></p>
+<div class="controls"><button id="play">Play</button><label>Compare against <select id="reference"></select></label><label>View <select id="mode"><option value="frame">Current exposure</option><option value="difference">Absolute difference from reference</option><option value="max">Maximum across included exposures</option><option value="min">Minimum across included exposures</option><option value="median">Median across included exposures</option><option value="variation">Variation (standard deviation)</option></select></label><label>Display gain <select id="gain"><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option></select></label></div>
+<label for="timeline">Exposure position (filename order, not elapsed time)</label><input id="timeline" type="range" min="0" value="0" step="1" aria-label="Exposure position"><p id="position"></p>
+<div class="views"><figure><canvas id="left"></canvas><figcaption id="leftCaption"></figcaption></figure><figure><canvas id="right"></canvas><figcaption id="rightCaption"></figcaption></figure></div>
+<p id="explanation"></p><p class="muted">Black borders are outside valid shared coverage. Gain changes display brightness only and can clip highlights. No exposure or background normalization is applied: differences can reflect brightness changes, noise, processing, or imperfect alignment as well as sky changes.</p>
+<details open><summary>Choose exposures for projections</summary><p class="muted">Max, min, median, and variation use only checked exposures. The slider still visits all aligned previews. Reference selection is independent.</p><div id="frames"></div></details>
+<details><summary>Alignment and excluded files</summary><p class="muted">All frames share the first usable image's coordinates. Selecting a new comparison reference does not redo alignment. Experimental correlation alignment handles small translations and rotations, not changing scale, distortion, large motion, or unrelated targets. Scores are alignment diagnostics, not quality probabilities. Inspect the results visually.</p><div id="alignment"></div><div id="rejected"></div></details>
+<p class="muted">Local self-contained report. Originals are untouched. Reduced-resolution, 8-bit grayscale previews are for exploration, not scientific photometry or a finished stack. Full-resolution candidate elongation analysis remains a separate tool.</p></main>
+<script>
+'use strict';
+const data=__DATA__;
+const $=id=>document.getElementById(id);
+const unpack=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+data.frames.forEach(f=>{f.pixels=unpack(f.pixels);f.mask=unpack(f.mask)});
+const frames=data.frames, included=frames.map(()=>true), n=data.width*data.height;
+let timer=null;
+function stop(){if(timer!==null)clearInterval(timer);timer=null;$('play').textContent='Play'}
+function compute(mode, current, reference, indices){
+ const output=new Float32Array(n), mask=new Uint8Array(n);
+ const use=mode==='difference'?[current,reference]:mode==='frame'?[current]:indices;
+ if(!use.length)return {output,mask};
+ for(let p=0;p<n;p++){
+  if(!use.every(i=>frames[i].mask[p]))continue;
+  mask[p]=1;
+  if(mode==='difference')output[p]=Math.abs(frames[current].pixels[p]-frames[reference].pixels[p]);
+  else if(mode==='frame')output[p]=frames[current].pixels[p];
+  else {
+   const values=use.map(i=>frames[i].pixels[p]);
+   if(mode==='max')output[p]=Math.max(...values);
+   else if(mode==='min')output[p]=Math.min(...values);
+   else if(mode==='median'){values.sort((a,b)=>a-b);const mid=Math.floor(values.length/2);output[p]=values.length%2?values[mid]:(values[mid-1]+values[mid])/2}
+   else {const mean=values.reduce((a,b)=>a+b,0)/values.length;output[p]=Math.sqrt(values.reduce((a,b)=>a+(b-mean)**2,0)/values.length)}
+  }
+ }
+ return {output,mask};
+}
+function paint(id,values,mask){const canvas=$(id);canvas.width=data.width;canvas.height=data.height;const ctx=canvas.getContext('2d'), image=ctx.createImageData(data.width,data.height), gain=Number($('gain').value);for(let p=0;p<n;p++){const v=mask[p]?Math.min(255,Math.round(values[p]*gain)):0;image.data.set([v,v,v,255],p*4)}ctx.putImageData(image,0,0)}
+let cachedKey='',cached;
+function render(){
+ const current=Number($('timeline').value), ref=Number($('reference').value), mode=$('mode').value, indices=included.flatMap((v,i)=>v?[i]:[]);
+ const key=JSON.stringify([mode,mode==='frame'||mode==='difference'?current:null,mode==='difference'?ref:null,indices]);
+ if(key!==cachedKey){cached=compute(mode,current,ref,indices);cachedKey=key}
+ paint('left',frames[ref].pixels,frames[ref].mask);paint('right',cached.output,cached.mask);
+ $('position').textContent=`${current+1} / ${frames.length} · ${frames[current].name}`;
+ $('leftCaption').textContent=`Reference: ${frames[ref].name}`;
+ const projection=!['frame','difference'].includes(mode);
+ $('rightCaption').textContent=projection?`${mode} · ${indices.length} included exposures`:`${mode==='frame'?'Exposure':'Absolute difference'}: ${frames[current].name}`;
+ $('status').textContent=frames.length<2?'Only one frame aligned: no usable time sequence. Choose matching exposures.':projection&&indices.length<2?'Select at least two exposures for a meaningful sequence comparison.':'';
+ $('explanation').textContent={frame:'Current exposure in the alignment anchor’s coordinates.',difference:'Absolute pixel difference: black means equal brightness; brighter means a larger change. This is not a defect classification.',max:'Brightest value at each shared pixel. Transient lights and noise spikes can dominate.',min:'Darkest value at each shared pixel. Dimming and dark outliers can dominate.',median:'Middle value at each shared pixel. If most frames have a problem, the median can inherit it.',variation:'Population standard deviation at each shared pixel. Bright regions changed more across included exposures.'}[mode];
+}
+frames.forEach((f,i)=>{
+ const option=document.createElement('option');option.value=i;option.textContent=f.name;$('reference').append(option);
+ const label=document.createElement('label'), check=document.createElement('input');check.type='checkbox';check.checked=true;check.addEventListener('change',()=>{included[i]=check.checked;render()});label.append(check,document.createTextNode(f.name));$('frames').append(label);
+ const row=document.createElement('p');row.className='muted';row.textContent=`${f.name}: correlation ${f.correlation}; rotation ${f.angle}°; shift (${f.dx}, ${f.dy}) preview pixels; valid overlap ${(100*f.overlap).toFixed(1)}%`;$('alignment').append(row);
+});
+data.rejected.forEach(f=>{const p=document.createElement('p');p.textContent=`Excluded — ${f.name}: ${f.reason}`;$('rejected').append(p)});
+$('provenance').textContent=`${frames.length} aligned / ${frames.length+data.rejected.length} supported files · ${data.width} × ${data.height} previews from ${data.original_width} × ${data.original_height} stored pixels · alignment anchor: ${frames[0].name}`;
+$('timeline').max=frames.length-1;$('timeline').disabled=frames.length<2;$('play').disabled=frames.length<2;
+$('timeline').addEventListener('input',render);['reference','mode','gain'].forEach(id=>$(id).addEventListener('change',render));
+$('play').addEventListener('click',()=>{if(timer!==null){stop();return}$('play').textContent='Pause';timer=setInterval(()=>{$('timeline').value=(Number($('timeline').value)+1)%frames.length;render()},800)});
+document.addEventListener('visibilitychange',()=>{if(document.hidden)stop()});
+render();
+</script></html>

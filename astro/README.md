@@ -137,3 +137,56 @@ and generate a report with `--title 'Synthetic controls'`. The generator refuses
 existing directories and writes known construction labels. Synthetic tests do not
 establish real-world accuracy. See `docs/ELONGATION.md` for the algorithm, safeguards
 and the measured phone-photo results.
+
+## Experimental sequence explorer
+
+The optional Python sequence viewer treats matching exposures as a width × height ×
+frame-index cube. It is separate from the C++ elongation analyzer and does not
+change its decisions. Requires `numpy` and `opencv-python` (already in this repo's
+Python environment). No additional JavaScript packages or network access are needed.
+
+```powershell
+& ./.venv/Scripts/python.exe astro/sequence.py 'C:/path/to/same-target-exposures' 'astro/results/sequence.html'
+```
+
+Open the generated HTML. Use the exposure slider or Play, select a comparison
+reference, and choose current frame, absolute difference, maximum, minimum,
+median, or variation (population standard deviation). Checkboxes select the frames
+used in projections. Display gain affects rendering only. An empty selection is
+explicitly flagged; projections show black outside the intersection of valid masks.
+Reference selection changes the comparison image, not the alignment coordinate system.
+
+Inputs are sorted by filename, not capture timestamps. Unsupported extensions are
+skipped; corrupt files and failed alignments are listed as excluded. Use individual
+exposures of the same field, orientation, and dimensions, not a collection of
+unrelated finished images. Originals are never changed and output overwrite is refused.
+
+For a reproducible demonstration:
+
+```powershell
+& ./.venv/Scripts/python.exe astro/make_sequence_demo.py astro/samples/time-sequence
+& ./.venv/Scripts/python.exe astro/sequence.py astro/samples/time-sequence astro/results/sequence-demo.html --title 'Synthetic time sequence'
+& ./.venv/Scripts/python.exe -m unittest discover -s astro/tests -p 'test_*.py' -v
+node astro/tests/sequence_controls.cjs astro/sequence_view.html
+```
+
+The six synthetic exposures contain baseline sources, noise, a transient streak,
+dimming, elongated sources, and return to baseline, with small known motions.
+They demonstrate behavior and are not real-world validation.
+
+Limits: at most 40 supported files, previews default to a 640-pixel long side
+(`--size 128..1024`), grayscale encoded brightness converted to 8 bits for browser
+use. Alignment uses OpenCV ECC with translation/rotation, anchored to the first
+usable file. It requires correlation >= 0.70, valid overlap >= 75%, rotation <=
+10 degrees, and translation <= 20% of the preview short dimension. These are
+experimental safeguards, not calibrated confidence estimates. Scale changes,
+large shifts, distortions, weak sources, and unrelated images are unsupported.
+EXIF orientation is ignored; TIFF uses its first decoded image. All source frames
+are decoded sequentially; full source decoding still requires memory for one image,
+while the browser stores the bounded preview cube. Projection changes are synchronous.
+
+No photometric normalization, scientific stacking export, automatic defect diagnosis,
+real-time camera input, or guaranteed star-based registration is provided. Interpolation
+and downsampling affect shape. Use the original-resolution C++ analyzer for its
+existing candidate-shape measurements. A median can inherit a defect present in most
+frames; max/min can be dominated by outliers. These are exploratory views.
