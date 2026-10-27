@@ -8,6 +8,7 @@ from tkinter import ttk, filedialog, messagebox
 import webbrowser
 
 from .review_server import ReviewServer
+from .browser_analysis import BrowserAnalysis
 
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_STATE = REPO/'data/astrotrack.json'
@@ -31,7 +32,8 @@ def save_state(path, state):
 
 class ReviewSession:
     """Own the local service, including switching reports and orderly shutdown."""
-    def __init__(self, port=8765):
+    def __init__(self, port=8765, analysis=None):
+        self.analysis=analysis
         self.port=port
         self.server=None
         self.thread=None
@@ -47,7 +49,7 @@ class ReviewSession:
                 return self.server.origin
             self._stop()
             try:
-                server=ReviewServer(report,None,self.port)
+                server=ReviewServer(report,None,self.port,analysis=self.analysis)
             except OSError as error:
                 if getattr(error,'winerror',None)==10048 or getattr(error,'errno',None) in (98,10048):
                     raise RuntimeError('Another AstroTrack window or older report launcher is already open. Close it, then reopen this review.') from error
@@ -76,8 +78,10 @@ class AstroPanel:
         self.parent=parent
         self.state_path=Path(state_path)
         self.state=load_state(self.state_path)
-        self.session=ReviewSession()
         self.events=queue.Queue()
+        self.browser_analysis=BrowserAnalysis(self.events)
+        self.session=ReviewSession(analysis=self.browser_analysis)
+        self.from_browser=False
         self.cancel=threading.Event()
         self.worker=None
         self.busy=False
@@ -146,19 +150,24 @@ class AstroPanel:
         if self.state.get('last_report'):
             self.reopen()
 
-    def choose_folder(self):
+    def choose_folder(self, from_browser=False):
         if self.busy or self.closed:
             return
         initial=self.state.get('last_source')
         folder=filedialog.askdirectory(parent=self.parent,title='Choose captures to analyze',
             **({'initialdir':initial} if initial and Path(initial).is_dir() else {}))
-        if folder:
-            self.analyze_folder(folder)
+        if from_browser and (not folder or self.browser_analysis.cancel.is_set()):
+            self.browser_analysis.update('cancelled','Folder selection cancelled. Your current review is still open.')
+        elif folder:
+            self.analyze_folder(folder, from_browser=from_browser)
 
-    def analyze_folder(self, folder):
+    def analyze_folder(self, folder, from_browser=False):
         if self.busy or self.closed:
             return
-        self.cancel=threading.Event()
+        self.from_browser=from_browser
+        self.cancel=self.browser_analysis.cancel if from_browser else threading.Event()
+        if from_browser:
+            self.browser_analysis.update('analysis','Checking the image folder…',folder=str(folder))
         self.task='analysis'
         self.state['last_source']=str(folder)
         self.folder_label.config(text=str(folder))
@@ -171,10 +180,10 @@ class AstroPanel:
                 if self.cancel.is_set():
                     raise AnalysisCancelled('Analysis cancelled. Generated results were kept; your source images were not changed.')
                 self.events.put(('progress',{'phase':'opening','message':'Opening the review…','done':None,'total':0}))
-                origin=self.session.start(result.report)
+                origin=None if from_browser else self.session.start(result.report)
                 if self.cancel.is_set():
                     raise AnalysisCancelled('Analysis cancelled. Generated results were kept; your source images were not changed.')
-                self.events.put(('created',(result,origin)))
+                self.events.put(('created_browser' if from_browser else 'created',(result,origin)))
             except AnalysisCancelled as error:
                 self.events.put(('cancelled',str(error)))
             except Exception as error:
@@ -206,6 +215,8 @@ class AstroPanel:
 
     def set_busy(self, value, cancellable=False):
         self.busy=value
+        with self.browser_analysis.lock:
+            self.browser_analysis.desktop_busy=value
         for button in [self.analyze_button,self.open_button,self.reopen_button,self.sequence_open,self.sequence_build]:
             button.config(state='disabled' if value else 'normal')
         if value:
@@ -221,6 +232,8 @@ class AstroPanel:
         self.cancel_button.config(state='normal' if value and cancellable else 'disabled')
 
     def show_progress(self, event):
+        if self.from_browser:
+            self.browser_analysis.progress(event)
         if self.cancel.is_set() and self.task=='analysis':
             return
         self.status.config(text=event['message'])
@@ -278,7 +291,7 @@ class AstroPanel:
         self.worker=threading.Thread(target=work,daemon=True)
         self.worker.start()
 
-    def review_ready(self, path, origin, message):
+    def review_ready(self, path, origin, message, open_browser=True):
         self.state['last_report']=str(path)
         self.report_label.config(text=str(path))
         self.reopen_button.config(state='normal')
@@ -287,7 +300,7 @@ class AstroPanel:
             save_state(self.state_path,self.state)
         except OSError:
             self.status.config(text=message+' The recent-review setting could not be saved.')
-        if not self.closing:
+        if not self.closing and open_browser:
             webbrowser.open(origin)
 
     def poll(self):
@@ -296,6 +309,16 @@ class AstroPanel:
         try:
             while True:
                 kind,value=self.events.get_nowait()
+                if kind=='browser_choose':
+                    if self.busy or self.closing:
+                        self.browser_analysis.update('error','AstroTrack is busy or closing. Try again when it is ready.')
+                    else:
+                        try:
+                            self.parent.winfo_toplevel().lift()
+                            self.choose_folder(from_browser=True)
+                        except Exception as error:
+                            self.browser_analysis.update('error',str(error))
+                    continue
                 if kind=='progress':
                     self.show_progress(value)
                     continue
@@ -309,28 +332,36 @@ class AstroPanel:
                 if kind=='review':
                     path,origin=value
                     self.review_ready(path,origin,'Review open. Playback and folder actions are ready.')
-                elif kind=='created':
+                elif kind in ('created','created_browser'):
                     result,origin=value
                     message=f'Review ready: {result.total:,} images.'
                     if result.failed:
                         message+=f' {result.failed:,} could not be read; the report lists them.'
-                    self.review_ready(result.report,origin,message)
+                    if kind=='created_browser':
+                        self.browser_analysis.ready(result,message)
+                    self.review_ready(result.report,origin,message,open_browser=kind=='created')
                 elif kind=='sequence':
                     self.status.config(text='Aligned explorer ready.')
                     if not self.closing:
                         webbrowser.open(Path(value).as_uri())
                 elif kind=='cancelled':
+                    if self.from_browser:
+                        self.browser_analysis.update('cancelled',value)
                     self.status.config(text=value)
                 else:
+                    if self.from_browser:
+                        self.browser_analysis.update('error',value)
                     self.status.config(text=value)
-                    if not self.closing:
+                    if not self.closing and not self.from_browser:
                         messagebox.showerror('AstroTrack',value,parent=self.parent)
+                self.from_browser=False
         except queue.Empty:
             pass
         self.timer=self.parent.after(100,self.poll)
 
     def dispose(self):
         self.closed=True
+        self.browser_analysis.close()
         self.parent.after_cancel(self.timer)
         self.cancel.set()
         if self.worker is not None:

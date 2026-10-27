@@ -17,6 +17,10 @@ analyze PNG, JPEG or TIFF exposures and open the review automatically. Processin
 is local; nothing is uploaded. Only files directly in the chosen folder are used.
 The compiled astro analyzer must already be available under astro/build.
 
+You can also use **Choose image folder…** directly in an open report. Pick a folder,
+watch progress or cancel on the page, and the completed review opens in the same tab.
+Keep AstroTrack running; open reports through the app or their .cmd launcher.
+
 The app shows analysis and preview-preparation progress and supports cancellation.
 Each run saves a new report and measurements under ignored data/astrotrack-runs.
 You can also open a saved review. AstroTrack remembers your last report and folder,

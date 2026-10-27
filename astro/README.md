@@ -6,7 +6,22 @@ or PhotoPeople dependency is required by this executable.
 
 ## Choose a folder and analyze it
 
-Open AstroTrack and click **Choose image folder…**. The app validates the folder,
+In an open AstroTrack report, click **Choose image folder…** in the top bar.
+A Windows folder picker opens; choose the captures to analyze. Progress and
+**Cancel analysis** appear in the report, and the finished review opens in the same
+tab. The current review remains available on cancellation or error. Decisions and
+notes stay saved per image sequence in this browser. If browser saving is blocked,
+the page asks you to download a backup before leaving the current review.
+
+Launch the report through **Start AstroTrack.bat** or its generated .cmd launcher
+and keep AstroTrack running. A standalone file:// HTML cannot launch the analyzer;
+its folder button explains how to connect. The local connection accepts only
+folders selected in the native picker, protects requests with a session token,
+and invalidates old tabs' file actions when switching reports. Refreshing a page
+during analysis resumes its progress display. File moves wait until analysis ends.
+
+The desktop window also offers **Choose image folder…** for the first review.
+The app validates the folder,
 runs the existing C++ analyzer, prepares the previews, and opens the completed
 review with folder access. No terminal command or upload is required.
 

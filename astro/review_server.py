@@ -19,32 +19,39 @@ MAX_REQUEST = 4 * 1024 * 1024
 
 
 class ReviewServer(HTTPServer):
-    def __init__(self, report, source_dir=None, port=8765):
-        self.report = Path(report).resolve(strict=True)
-        original = self.report.read_text(encoding='utf-8')
+    def __init__(self, report, source_dir=None, port=8765, analysis=None):
+        self.analysis = analysis
+        self.load_report(report, source_dir)
+        super().__init__(('127.0.0.1',port), Handler)
+        self.origin = f'http://127.0.0.1:{self.server_port}'
+
+    def load_report(self, report, source_dir=None):
+        # Prepare completely before replacing the current report. The single
+        # HTTP request thread serializes this swap with all file-move requests.
+        report = Path(report).resolve(strict=True)
+        original = report.read_text(encoding='utf-8')
         if DATA_TAG not in original:
             raise ValueError('This is not a current AstroTrack review. Generate a review report first.')
         data = json.loads(original.split(DATA_TAG,1)[1].split('</script>',1)[0])
-        self.allowed = {str(Path(f['path']).absolute()) for f in data['frames']}
+        allowed = {str(Path(f['path']).absolute()) for f in data['frames']}
         if source_dir is None:
-            folders={Path(p).parent for p in self.allowed}
+            folders={Path(p).parent for p in allowed}
             if len(folders)!=1:
                 raise ValueError('This report spans multiple image folders. Use review_server.py with an explicit parent folder.')
             source_dir=folders.pop()
-        self.root = Path(source_dir).resolve(strict=True)
-        if not self.root.is_dir():
+        root = Path(source_dir).resolve(strict=True)
+        if not root.is_dir():
             raise ValueError('Image folder must be a directory.')
-        if not self.allowed or any(not Path(p).is_relative_to(self.root) for p in self.allowed):
+        if not allowed or any(not Path(p).is_relative_to(root) for p in allowed):
             raise ValueError('Every report image must belong to the selected image folder.')
         # Apply the current UI to stored measurements/previews, without reanalysis.
         template=Path(__file__).with_name('astro_report_template.html').read_text(encoding='utf-8')
         payload=json.dumps(data,ensure_ascii=True,separators=(',',':')).replace('<','\\u003c')
-        self.html=template.replace('__TITLE__',html.escape(data.get('title',self.report.stem))).replace('__REPORT_DATA__',payload)
+        document=template.replace('__TITLE__',html.escape(data.get('title',report.stem))).replace('__REPORT_DATA__',payload)
+        self.report, self.root, self.allowed, self.html = report, root, allowed, document
         self.token = secrets.token_urlsafe(32)
         self.plans = {}
         self.moved = {}
-        super().__init__(('127.0.0.1',port), Handler)
-        self.origin = f'http://127.0.0.1:{self.server_port}'
         self.refresh_moved()
 
     def refresh_moved(self):
@@ -110,7 +117,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(404,{'error':'Not found.'})
         self.server.refresh_moved()
         session={'token':self.server.token,'destination':str(self.server.root/'Rejected'),
-                 'moved':self.server.moved}
+                 'moved':self.server.moved,
+                 'analysisEnabled':self.server.analysis is not None,
+                 'analysis':self.server.analysis.snapshot() if self.server.analysis else None}
         tag='<script id="local-session" type="application/json">'+json.dumps(session).replace('<','\\u003c')+'</script>'
         self.respond(200,self.server.html.replace(SESSION_TAG,tag,1),'text/html; charset=utf-8')
 
@@ -129,6 +138,25 @@ class Handler(BaseHTTPRequestHandler):
             if self.headers.get_content_type()!='application/json':
                 return self.respond(400,{'error':'Invalid request.'})
             body=json.loads(raw)
+            if self.path.startswith('/api/analysis/'):
+                bridge=self.server.analysis
+                if bridge is None:
+                    raise ValueError('Open this review through Start AstroTrack.bat to analyze a folder.')
+                if self.path=='/api/analysis/choose':
+                    return self.respond(200,bridge.choose())
+                if self.path=='/api/analysis/status':
+                    return self.respond(200,bridge.snapshot())
+                if self.path=='/api/analysis/cancel':
+                    return self.respond(200,bridge.cancel_job(body.get('job')))
+                if self.path=='/api/analysis/open':
+                    report=bridge.result(body.get('job'))
+                    self.server.load_report(report)
+                    bridge.opened()
+                    return self.respond(200,{'reload':True})
+                return self.respond(404,{'error':'Not found.'})
+            if (self.path in ('/api/plan','/api/move') and self.server.analysis
+                    and self.server.analysis.snapshot()['phase'] in self.server.analysis.ACTIVE):
+                raise ValueError('Finish or cancel folder analysis before moving images.')
             if self.path=='/api/plan':
                 document=self.server.document(body.get('paths'))
                 _,moves=plan_moves(document,self.server.root)
