@@ -5,22 +5,23 @@ const frames=[0,1,2].map(id=>({id,name:'frame-'+id+'.png',path:'C:/images/frame-
  decision:id===0?'review_suggested':'no_elongation_flag',status:'ok',fraction:.1,ratio:1.1,
  count:0,coverage:'all_detected_peaks',brightFraction:null,width:100,height:100,markers:[],examples:[],
  linear:'data:linear',enhanced:'data:enhanced'}));
-function launch(store=new Map(),blocked=false){
+function launch(store=new Map(),blocked=false,session=null,fetchImpl=undefined){
  const els={},events={};let exported,download;
  for(const [,id] of source.matchAll(/\bid="([^"]+)"/g))els[id]={id,value:'',checked:false,hidden:false,textContent:'',innerHTML:'',
  style:{},attributes:{},clientWidth:750,clientHeight:590,offsetLeft:22,offsetTop:22,listeners:{},
  classList:{toggle(){}},setAttribute(k,v){this.attributes[k]=v},
  toggleAttribute(k,on){if(on)this.attributes[k]='';else delete this.attributes[k]},
  addEventListener(k,fn){this.listeners[k]=fn},click(){return this.listeners.click?.({})}};
+ els['local-session'].textContent=JSON.stringify(session);
  els['report-data'].textContent=JSON.stringify({frames,summary:'m31.csv',candidates:'stars.csv',versions:['test']});
- for(const [id,value] of Object.entries({filter:'all','review-filter':'all',sort:'sequence',display:'enhanced',gain:'1',zoom:'1'}))els[id].value=value;
- const context={document:{getElementById:id=>els[id],querySelector:()=>({hidden:false}),createElement:()=>({click(){download=this.download}})},
+ for(const [id,value] of Object.entries({filter:'all','review-filter':'all',sort:'sequence','rejected-action':'export',display:'linear',gain:'1',zoom:'1'}))els[id].value=value;
+ const context={fetch:fetchImpl,document:{getElementById:id=>els[id],querySelector:()=>({hidden:false}),createElement:()=>({click(){download=this.download}})},
  window:{addEventListener(k,fn){events[k]=fn}},
  localStorage:{getItem(k){if(blocked)throw Error('disabled');return store.get(k)||null},setItem(k,v){if(blocked)throw Error('disabled');store.set(k,v)}},
  Blob:class{constructor(parts){exported=JSON.parse(parts.join(''))}},
  URL:{createObjectURL(){return 'blob:test'},revokeObjectURL(){}},setTimeout:fn=>fn()};
  vm.runInNewContext(script,context,{timeout:2000});
- return {els,events,store,fire:(id,event)=>els[id].listeners[event](),
+ return {els,events,store,download(){return {document:exported,name:download}},fire:(id,event)=>els[id].listeners[event](),
  export(){els.export.click();assert.equal(download,'astro-review.json');return exported},
  async import(doc){els['import-file'].files=[{text:async()=>JSON.stringify(doc)}];await els['import-file'].listeners.change()}};
 }
@@ -66,5 +67,43 @@ function launch(store=new Map(),blocked=false){
  const corrupt=new Map(app.store);for(const k of corrupt.keys())corrupt.set(k,'not JSON');
  const recovered=launch(corrupt);assert.match(recovered.els['save-status'].textContent,/Could not restore/);
  await recovered.import(backup);assert.equal(recovered.export().assessments[1].review_decision,'reject');
- console.log('Review workflow passed: decisions, independent assessments, filters, reload, import/export, invalid data, keyboard and unavailable storage.');
+
+ // The actual HTML default, not just the mock value, must be Linear.
+ assert.match(source,/<select id="display"><option value="linear" selected>/);
+ const offline=launch();
+ assert.equal(offline.els.overview.src,'data:linear');
+ assert.equal(offline.els['rejected-count'].textContent,'0','Algorithm flags alone do not count as rejections');
+ offline.els.keep.click();offline.els.next.click();offline.els.reject.click();
+ await offline.els['rejected-run'].click();
+ assert.equal(offline.download().name,'astro-rejected.json');
+ assert.equal(offline.download().document.assessments.length,1);
+ assert.equal(offline.download().document.assessments[0].path,frames[1].path);
+ offline.els['rejected-action'].value='move';offline.fire('rejected-action','change');
+ assert.equal(offline.els['rejected-run'].disabled,true);
+ assert.match(offline.els['rejected-help'].textContent,/launcher/);
+ const calls=[],moved={[frames[0].path]:'C:/images/Rejected/frame-0.png'};
+ const local=launch(new Map(),false,{token:'session',destination:'C:/images/Rejected',moved:{}},async(route,options)=>{
+   calls.push({route,body:JSON.parse(options.body),token:options.headers['X-Astro-Token']});
+   return {ok:true,json:async()=>route==='/api/plan'?{plan:'plan-1',destination:'C:/images/Rejected',files:[{source:frames[0].path}]}:{moved}};
+ });
+ local.els.reject.click();local.els['rejected-action'].value='move';local.fire('rejected-action','change');
+ await local.els['rejected-run'].click();
+ assert.equal(calls.length,1);assert.equal(calls[0].route,'/api/plan');
+ assert.deepEqual(calls[0].body.paths,[frames[0].path]);assert.equal(calls[0].token,'session');
+ assert.equal(local.els['move-preview'].hidden,false);
+ await local.els['confirm-move'].click();
+ assert.equal(calls[1].route,'/api/move');assert.equal(calls[1].body.plan,'plan-1');
+ assert.match(local.els['rejected-status'].textContent,/Moved 1 images/);
+ assert.equal(local.els['rejected-run'].disabled,true,'Already moved images cannot be submitted again');
+ assert.match(local.els['rejected-list'].innerHTML,/Moved to Rejected/);
+ const changed=launch(new Map(),false,{token:'session',destination:'Rejected',moved:{}},async()=>({ok:true,json:async()=>({plan:'old-plan',destination:'Rejected',files:[{source:frames[0].path}]})}));
+ changed.els.reject.click();changed.els['rejected-action'].value='move';changed.fire('rejected-action','change');
+ await changed.els['rejected-run'].click();changed.els.keep.click();
+ assert.equal(changed.els['move-preview'].hidden,true,'Changing a decision cancels the pending move');
+ const failed=launch(new Map(),false,{token:'session',destination:'Rejected',moved:{}},async()=>({ok:false,json:async()=>({error:'Destination exists',moved:{}})}));
+ failed.els.reject.click();failed.els['rejected-action'].value='move';failed.fire('rejected-action','change');
+ await failed.els['rejected-run'].click();
+ assert.match(failed.els['rejected-status'].textContent,/Destination exists/);
+ assert.equal(failed.els['rejected-run'].disabled,false,'Allow retry after a failed preview');
+ console.log('Review workflow passed: decisions, independent assessments, filters, reload, import/export, invalid data, keyboard, unavailable storage, rejected-only export and confirmed moves.');
 })().catch(error=>{console.error(error);process.exitCode=1});

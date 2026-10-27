@@ -179,13 +179,59 @@ K / R / V are shortcuts when you are not typing or using another control.
 
 Decisions and notes save automatically in this browser, separately for each set
 of source image paths. Local-file storage availability depends on the browser;
-a visible warning appears if saving fails. **Export review** downloads
-astro-review.json as a portable backup. **Import review** restores that backup
+a visible warning appears if saving fails. **Review backup > Download backup** downloads
+astro-review.json as a portable backup. **Review backup > Restore backup** restores that backup
 and replaces the current review for the same image sequence. Export first if
 you want to retain the current decisions. Moving the HTML or changing browsers
 can require importing a backup. Clearing browser data removes browser saves.
 
-To separate rejected files in File Explorer, run from the repository root:
+### Rejected-image actions
+
+**Linear · original scale** is the default display. Enhanced remains available
+in the same menu.
+
+Expand **Rejected images** above the exposure browser. This section contains
+only images you explicitly marked Reject, independent of the algorithm flag and
+the current exposure filter. Choose an action:
+
+- **Export rejected list** downloads astro-rejected.json with only rejected
+  entries and their original paths. It excludes Keep, Revisit and unreviewed images.
+- **Put rejected images in a folder** previews the pending moves. Check the count,
+  filenames and destination, then choose **Move these N images**. The files move
+  into the source folder's Rejected subfolder. Completed moves are marked and are
+  excluded from later move requests. Changing a review decision does not undo a
+  completed move; restore those files in Explorer if needed.
+
+The full review backup is separate, under **Review backup** in the top bar.
+
+### Open with folder access on Windows
+
+Report generation also writes a matching **.cmd launcher** beside each HTML report
+when its image paths share one folder. Double-click the launcher to open the local
+review app. Leave its window running until you finish; Ctrl+C stops it. It serves
+only this report on your computer, with no uploads or extra Python dependencies.
+
+For an existing current-format report, you can also launch from the repository:
+
+~~~bat
+.venv\Scripts\python.exe astro\review_server.py "C:\path\to\review.html" "C:\path\to\image-folder"
+~~~
+
+The direct HTML still supports reviewing and exporting. File moves require the
+launcher; the dropdown explains this when opened as a standalone file.
+The local app uses port 8765 by default; --port selects another port if needed.
+Browser saves belong to that browser and address. If you already reviewed images
+in the standalone HTML, download a backup there, then restore it in the local app
+once. Keep the same port for later visits to retain browser saves.
+
+The service accepts only paths embedded in its report and inside the selected
+image folder. A move requires a one-use preview token, matching file metadata,
+and the current local session. Existing targets are refused. It does not expose
+a general file browser.
+
+### Optional command-line organizer
+
+To apply an exported rejected list (or a full review backup) without the local app, run from the repository root:
 
 ~~~bat
 .venv\Scripts\python.exe astro\organize_review.py "C:\path\to\astro-review.json" "C:\path\to\image-folder"
@@ -212,6 +258,7 @@ Checks for this workflow:
 ~~~bat
 .venv\Scripts\python.exe -m unittest discover -s astro/tests -p test_organize_review.py -v
 node astro/tests/review_workflow.cjs astro/astro_report_template.html
+.venv\Scripts\python.exe -m unittest discover -s astro/tests -p test_review_server.py -v
 ~~~
 
 ## Experimental sequence explorer

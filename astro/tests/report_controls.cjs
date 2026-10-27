@@ -28,8 +28,9 @@ for(const [,id] of source.matchAll(/\bid="([^"]+)"/g)){
 }
 // SVG does not reflect a .hidden property into attributes. Model that distinction.
 elements['selection-overlay'].attributes.hidden='';
+elements['local-session'].textContent='null';
 elements['report-data'].textContent=JSON.stringify(data);
-for(const [id,value] of Object.entries({filter:'all','review-filter':'all',sort:'sequence',display:'enhanced',gain:'1',zoom:'1'}))elements[id].value=value;
+for(const [id,value] of Object.entries({filter:'all','review-filter':'all',sort:'sequence','rejected-action':'export',display:'linear',gain:'1',zoom:'1'}))elements[id].value=value;
 const inspector={hidden:false};
 let exported,download,revoked=false;
 const context={
@@ -66,6 +67,9 @@ assert.match(elements['selection-overlay'].innerHTML,/cx="1900" cy="2500"/);
 assert.notEqual(elements['selection-overlay'].innerHTML,pointerBefore,'Pointer scales with preview zoom');
 assert.ok(elements.viewport.scrollLeft>0);
 assert.ok(elements.viewport.scrollTop>0);
+elements.display.value='enhanced';fire('display','change');
+assert.equal(elements.overview.src,'data:enhanced-0');
+assert.equal(elements.crop.src,'data:crop2-enhanced');
 elements.display.value='linear';fire('display','change');
 assert.equal(elements.overview.src,'data:linear-0');
 assert.equal(elements.crop.src,'data:crop2-linear');

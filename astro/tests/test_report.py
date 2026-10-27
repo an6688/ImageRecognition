@@ -79,6 +79,21 @@ class ReportTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             report.build(self.root/'summary.csv',self.root/'candidates.csv',output,'Again')
 
+    def test_launcher_quotes_paths_and_refuses_overwrite(self):
+        directory=self.root/'night & 100%'
+        directory.mkdir()
+        output=directory/'review.html'
+        launcher=report.write_launcher(output,directory)
+        text=launcher.read_text(encoding='utf-8')
+        self.assertIn('DisableDelayedExpansion',text)
+        self.assertIn('chcp 65001',text)
+        self.assertIn('"'+str(output.absolute()).replace('%','%%')+'"',text)
+        self.assertIn('review_server.py"',text)
+        before=launcher.read_bytes()
+        with self.assertRaises(FileExistsError):
+            report.write_launcher(output,directory)
+        self.assertEqual(launcher.read_bytes(),before)
+
     def test_16bit_decode_and_display_separation(self):
         decoded=report.read_gray(self.image)
         self.assertEqual(decoded.dtype,np.uint16)

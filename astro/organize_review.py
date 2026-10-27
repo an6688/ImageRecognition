@@ -21,7 +21,7 @@ def plan_moves(document, source_dir):
     root = Path(source_dir).resolve(strict=True)
     if not root.is_dir():
         raise ValueError('Source folder must be a directory.')
-    if (not isinstance(document, dict) or document.get('kind') != 'astrotrack-review'
+    if (not isinstance(document, dict) or document.get('kind') not in {'astrotrack-review', 'astrotrack-rejections'}
             or document.get('schema_version') != 1
             or not isinstance(document.get('assessments'), list)):
         raise ValueError('Expected an AstroTrack review export (astro-review.json).')
@@ -93,6 +93,10 @@ def move_no_replace(source, destination, expected):
 def organize(review_path, source_dir, apply=False):
     with Path(review_path).open(encoding='utf-8-sig') as handle:
         document = json.load(handle)
+    return organize_document(document, source_dir, apply)
+
+
+def organize_document(document, source_dir, apply=False):
     root, moves = plan_moves(document, source_dir)
     for source, destination, _ in moves:
         print(f'{source} -> {destination}')
