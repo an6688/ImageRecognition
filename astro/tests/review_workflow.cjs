@@ -11,15 +11,16 @@ function launch(store=new Map(),blocked=false,session=null,fetchImpl=undefined){
  style:{},attributes:{},clientWidth:750,clientHeight:590,offsetLeft:22,offsetTop:22,listeners:{},
  classList:{toggle(){}},setAttribute(k,v){this.attributes[k]=v},
  toggleAttribute(k,on){if(on)this.attributes[k]='';else delete this.attributes[k]},
- addEventListener(k,fn){this.listeners[k]=fn},click(){return this.listeners.click?.({})}};
+ addEventListener(k,fn){const before=this.listeners[k];this.listeners[k]=before?(...args)=>{before(...args);return fn(...args)}:fn},click(){return this.listeners.click?.({})}};
+ els['playback-stage'].hidden=true;
  els['local-session'].textContent=JSON.stringify(session);
  els['report-data'].textContent=JSON.stringify({frames,summary:'m31.csv',candidates:'stars.csv',versions:['test']});
- for(const [id,value] of Object.entries({filter:'all','review-filter':'all',sort:'sequence','rejected-action':'export',display:'linear',gain:'1',zoom:'1'}))els[id].value=value;
+ for(const [id,value] of Object.entries({filter:'all','review-filter':'all',sort:'sequence','rejected-action':'export',display:'linear','playback-display':'linear','playback-speed':'2',gain:'1',zoom:'1'}))els[id].value=value;
  const context={fetch:fetchImpl,document:{getElementById:id=>els[id],querySelector:()=>({hidden:false}),createElement:()=>({click(){download=this.download}})},
  window:{addEventListener(k,fn){events[k]=fn}},
  localStorage:{getItem(k){if(blocked)throw Error('disabled');return store.get(k)||null},setItem(k,v){if(blocked)throw Error('disabled');store.set(k,v)}},
  Blob:class{constructor(parts){exported=JSON.parse(parts.join(''))}},
- URL:{createObjectURL(){return 'blob:test'},revokeObjectURL(){}},setTimeout:fn=>fn()};
+ URL:{createObjectURL(){return 'blob:test'},revokeObjectURL(){}},clearTimeout(){},setTimeout:fn=>fn()};
  vm.runInNewContext(script,context,{timeout:2000});
  return {els,events,store,download(){return {document:exported,name:download}},fire:(id,event)=>els[id].listeners[event](),
  export(){els.export.click();assert.equal(download,'astro-review.json');return exported},
@@ -80,7 +81,7 @@ function launch(store=new Map(),blocked=false,session=null,fetchImpl=undefined){
  assert.equal(offline.download().document.assessments[0].path,frames[1].path);
  offline.els['rejected-action'].value='move';offline.fire('rejected-action','change');
  assert.equal(offline.els['rejected-run'].disabled,true);
- assert.match(offline.els['rejected-help'].textContent,/launcher/);
+ assert.match(offline.els['rejected-help'].textContent,/AstroTrack/);
  const calls=[],moved={[frames[0].path]:'C:/images/Rejected/frame-0.png'};
  const local=launch(new Map(),false,{token:'session',destination:'C:/images/Rejected',moved:{}},async(route,options)=>{
    calls.push({route,body:JSON.parse(options.body),token:options.headers['X-Astro-Token']});

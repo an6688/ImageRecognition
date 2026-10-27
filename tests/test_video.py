@@ -39,17 +39,24 @@ class VideoTests(unittest.TestCase):
             ui.select(None);self.assertIsNone(ui.control.selection())
         finally:ui.dispose();root.destroy()
 
-    def test_main_app_embeds_both_workspaces(self):
+    def test_main_app_embeds_photo_video_and_astro_workspaces(self):
         import tkinter as tk
         import app
         from core import Store
-        with tempfile.TemporaryDirectory() as folder,patch.object(app,'Store',lambda:Store(folder)):
+        with tempfile.TemporaryDirectory() as folder,patch.object(app,'Store',lambda:Store(folder)),patch('astro.desktop.load_state',return_value={}):
             root=tk.Tk();ui=app.App(root)
             try:
-                self.assertEqual([ui.tabs.tab(t,'text') for t in ui.tabs.tabs()],['Photos','Videos'])
+                self.assertEqual([ui.tabs.tab(t,'text') for t in ui.tabs.tabs()],['Photos','Videos','AstroTrack'])
                 self.assertIs(ui.video.root,ui.video_page)
                 ui.tabs.select(ui.video_page);root.update()
                 self.assertTrue(ui.video.picture.winfo_ismapped())
+                self.assertIs(ui.astro.parent,ui.astro_page)
+                self.assertIsNone(ui.astro.session.server)
+                ui.tabs.select(ui.astro_page);root.update()
+                self.assertTrue(ui.astro.open_button.winfo_ismapped())
+                self.assertTrue(ui.astro.activated)
+                self.assertIsNone(ui.astro.session.server)
+
             finally:ui.close()
 
     def test_subject_filter_and_selected_id_reach_output(self):

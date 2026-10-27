@@ -4,6 +4,33 @@ A standalone, sequential C++17 command-line pipeline inside the existing Python
 photo-organizer repository. No Python runtime, models, UI, database, camera SDK,
 or PhotoPeople dependency is required by this executable.
 
+## Desktop launch and capture playback
+
+Double-click **Start AstroTrack.bat** in the repository root, or select the
+**AstroTrack** tab in the main Photos/Videos app. Open an existing report once.
+The app remembers the report, applies the current review UI to its stored previews
+and measurements, starts folder access, and opens it in your browser. No separate
+server command or helper window is needed. Keep the desktop app open while moving
+files. Use one AstroTrack instance at a time; close an older manual launcher if it
+already occupies the review port.
+
+**Capture playback** runs through every capture embedded in the report in filename
+order, independently of review filters and sorting. Play/Pause, 1/2/5/10 fps,
+looping, a scrubber, and frame stepping are available. Each preview is decoded
+before the next display delay begins, so playback may be slower on a busy machine.
+The default display is Linear; switching either display menu updates both views.
+Unreadable exposures remain in the timeline with their error shown.
+
+Choose **Review this frame** to pause and open the selected capture in the inspector.
+Inspector decisions and notes are disabled during playback to prevent marking a
+different image. Playback pauses when the browser tab is hidden. Previews are not
+aligned, and filename order does not reproduce capture intervals. This does not
+encode or export a video.
+
+The existing aligned sequence explorer is accessible from the desktop panel:
+open a saved explorer or create one from 2–40 matching exposures. Its difference
+and projection views are complementary to full-sequence playback.
+
 ## Build on Windows
 
 Install CMake 3.24+ and Visual Studio's Desktop development with C++ workload.
@@ -206,23 +233,21 @@ The full review backup is separate, under **Review backup** in the top bar.
 
 ### Open with folder access on Windows
 
-Report generation also writes a matching **.cmd launcher** beside each HTML report
-when its image paths share one folder. Double-click the launcher to open the local
-review app. Leave its window running until you finish; Ctrl+C stops it. It serves
-only this report on your computer, with no uploads or extra Python dependencies.
+Use **Start AstroTrack.bat** or the **AstroTrack** tab in the main desktop app.
+A generated report's matching **.cmd** shortcut also opens the desktop app for
+that report. The desktop app owns the local service and shuts it down on exit.
 
-For an existing current-format report, you can also launch from the repository:
+The direct HTML supports reviewing, playback and exporting. Folder moves require
+opening the report through AstroTrack. Browser saves belong to that browser and
+address. If you already reviewed images in a standalone HTML, download a backup
+there and restore it in the desktop-opened review once. The default local port is
+8765, so later visits use the same browser storage.
+
+Advanced/manual launch remains available:
 
 ~~~bat
 .venv\Scripts\python.exe astro\review_server.py "C:\path\to\review.html" "C:\path\to\image-folder"
 ~~~
-
-The direct HTML still supports reviewing and exporting. File moves require the
-launcher; the dropdown explains this when opened as a standalone file.
-The local app uses port 8765 by default; --port selects another port if needed.
-Browser saves belong to that browser and address. If you already reviewed images
-in the standalone HTML, download a backup there, then restore it in the local app
-once. Keep the same port for later visits to retain browser saves.
 
 The service accepts only paths embedded in its report and inside the selected
 image folder. A move requires a one-use preview token, matching file metadata,

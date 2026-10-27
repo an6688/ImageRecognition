@@ -9,6 +9,25 @@ Python 3.12 recommended. Run `powershell -ExecutionPolicy Bypass -File setup.ps1
 once, then double-click **Start PhotoPeople.bat**. For visible error output,
 run `.venv\Scripts\python.exe app.py` from this directory.
 
+## AstroTrack
+
+Open the **AstroTrack** tab in the desktop app, or double-click
+**Start AstroTrack.bat** to launch it directly. Choose an existing exposure review
+once; AstroTrack remembers it for the next launch and starts folder access
+automatically. The report opens in your browser. Keep the desktop app open while
+using its file-move actions; closing the app stops the service after any active move.
+
+The review includes **Capture playback** for the entire report: Play/Pause, speed,
+looping, a position slider, and **Review this frame** to inspect or mark the paused
+capture. Playback uses filename order and existing unaligned previews. Linear is
+the default; Enhanced is available. This is not real capture timing or an encoded
+video export.
+
+The AstroTrack tab also opens or creates the existing **Aligned sequence explorer**,
+with alignment, differences, and max/min/median/variation views. That experimental
+comparison tool still accepts 2–40 matching exposures; the main report's playback
+does not have that limit. See [astro/README.md](astro/README.md) for details.
+
 ## First library
 
 1. Click **Add photo folder** and choose a small collection to start.

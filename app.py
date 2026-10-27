@@ -15,7 +15,7 @@ INK = '#202638'
 class App:
     def __init__(self, root):
         self.root = root
-        root.title('ImageRecognition — Photos and Videos')
+        root.title('ImageRecognition — Photos, Videos and AstroTrack')
         root.geometry('1150x780')
         root.minsize(850, 580)
         root.configure(bg=BG)
@@ -46,6 +46,12 @@ class App:
         self.tabs.add(self.photo_page,text='Photos');self.tabs.add(self.video_page,text='Videos')
         from video_app import VideoApp
         self.video=VideoApp(self.video_page,embedded=True)
+        self.astro_page=ttk.Frame(self.tabs)
+        self.tabs.add(self.astro_page,text='AstroTrack')
+        from astro.desktop import AstroPanel
+        self.astro=AstroPanel(self.astro_page)
+        self.tabs.bind('<<NotebookTabChanged>>',lambda event: self.astro.activate() if self.tabs.select()==str(self.astro_page) else None)
+
         header = ttk.Frame(self.photo_page, padding=(28, 22))
         header.pack(fill='x')
         ttk.Label(header, text='PhotoPeople', style='Title.TLabel').pack(side='left')
@@ -459,8 +465,14 @@ class App:
             self.cancel.set()
             self.status.config(text='Stopping after the current photo; close again when the scan finishes.')
             return
+        if self.astro.busy:
+            self.astro.closing=True
+            self.astro.status.config(text='Finishing the AstroTrack operation before closing…')
+            self.root.after(100,self.close)
+            return
         self.progress.stop()
         self.video.dispose()
+        self.astro.dispose()
         self.root.after_cancel(self.poll_timer)
         self.store.close()
         self.root.destroy()

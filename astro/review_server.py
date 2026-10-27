@@ -2,12 +2,16 @@
 import argparse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
+import html
 from pathlib import Path
 import secrets
 import sys
 import webbrowser
 from urllib.parse import urlsplit
-from organize_review import organize_document, plan_moves
+if __package__:
+    from .organize_review import organize_document, plan_moves
+else:
+    from organize_review import organize_document, plan_moves
 
 SESSION_TAG = '<script id="local-session" type="application/json">null</script>'
 DATA_TAG = '<script id="report-data" type="application/json">'
@@ -15,18 +19,27 @@ MAX_REQUEST = 4 * 1024 * 1024
 
 
 class ReviewServer(HTTPServer):
-    def __init__(self, report, source_dir, port=8765):
+    def __init__(self, report, source_dir=None, port=8765):
         self.report = Path(report).resolve(strict=True)
+        original = self.report.read_text(encoding='utf-8')
+        if DATA_TAG not in original:
+            raise ValueError('This is not a current AstroTrack review. Generate a review report first.')
+        data = json.loads(original.split(DATA_TAG,1)[1].split('</script>',1)[0])
+        self.allowed = {str(Path(f['path']).absolute()) for f in data['frames']}
+        if source_dir is None:
+            folders={Path(p).parent for p in self.allowed}
+            if len(folders)!=1:
+                raise ValueError('This report spans multiple image folders. Use review_server.py with an explicit parent folder.')
+            source_dir=folders.pop()
         self.root = Path(source_dir).resolve(strict=True)
         if not self.root.is_dir():
             raise ValueError('Image folder must be a directory.')
-        self.html = self.report.read_text(encoding='utf-8')
-        if SESSION_TAG not in self.html:
-            raise ValueError('Regenerate this report with the current report.py first.')
-        data = json.loads(self.html.split(DATA_TAG,1)[1].split('</script>',1)[0])
-        self.allowed = {str(Path(f['path']).absolute()) for f in data['frames']}
         if not self.allowed or any(not Path(p).is_relative_to(self.root) for p in self.allowed):
             raise ValueError('Every report image must belong to the selected image folder.')
+        # Apply the current UI to stored measurements/previews, without reanalysis.
+        template=Path(__file__).with_name('astro_report_template.html').read_text(encoding='utf-8')
+        payload=json.dumps(data,ensure_ascii=True,separators=(',',':')).replace('<','\\u003c')
+        self.html=template.replace('__TITLE__',html.escape(data.get('title',self.report.stem))).replace('__REPORT_DATA__',payload)
         self.token = secrets.token_urlsafe(32)
         self.plans = {}
         self.moved = {}

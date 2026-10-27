@@ -22,15 +22,16 @@ for(const [,id] of source.matchAll(/\bid="([^"]+)"/g)){
     setAttribute(k,v){this.attributes[k]=v},
     toggleAttribute(k,on){if(on)this.attributes[k]='';else delete this.attributes[k];return !!on},
     hasAttribute(k){return Object.hasOwn(this.attributes,k)},
-    addEventListener(k,fn){this.listeners[k]=fn},
+    addEventListener(k,fn){const before=this.listeners[k];this.listeners[k]=before?(...args)=>{before(...args);return fn(...args)}:fn},
     click(){this.listeners.click?.({})}
   };
 }
 // SVG does not reflect a .hidden property into attributes. Model that distinction.
 elements['selection-overlay'].attributes.hidden='';
+elements['playback-stage'].hidden=true;
 elements['local-session'].textContent='null';
 elements['report-data'].textContent=JSON.stringify(data);
-for(const [id,value] of Object.entries({filter:'all','review-filter':'all',sort:'sequence','rejected-action':'export',display:'linear',gain:'1',zoom:'1'}))elements[id].value=value;
+for(const [id,value] of Object.entries({filter:'all','review-filter':'all',sort:'sequence','rejected-action':'export',display:'linear','playback-display':'linear','playback-speed':'2',gain:'1',zoom:'1'}))elements[id].value=value;
 const inspector={hidden:false};
 let exported,download,revoked=false;
 const context={
@@ -43,7 +44,7 @@ const context={
  window:{addEventListener(){}},
  Blob:class{constructor(parts){exported=JSON.parse(parts.join(''))}},
  URL:{createObjectURL(){return 'blob:test'},revokeObjectURL(){revoked=true}},
- setTimeout:fn=>fn()
+ clearTimeout(){},setTimeout:fn=>fn()
 };
 vm.runInNewContext(script,context,{timeout:2000});
 const fire=(id,event)=>elements[id].listeners[event]();

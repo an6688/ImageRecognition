@@ -88,7 +88,7 @@ class ReportTests(unittest.TestCase):
         self.assertIn('DisableDelayedExpansion',text)
         self.assertIn('chcp 65001',text)
         self.assertIn('"'+str(output.absolute()).replace('%','%%')+'"',text)
-        self.assertIn('review_server.py"',text)
+        self.assertTrue('astro_app.py"' in text or 'review_server.py"' in text)
         before=launcher.read_bytes()
         with self.assertRaises(FileExistsError):
             report.write_launcher(output,directory)

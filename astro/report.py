@@ -59,19 +59,28 @@ def render_frame(row,stars):
         out['examples'].append({'id':c['candidate_id'],'x':x,'y':y,'cx':x-ix+20,'cy':y-iy+20,'ratio':n(c['elongation']),'major':n(c['major_sigma']),'minor':n(c['minor_sigma']),'angle':n(c['angle_degrees']),'contrast':n(c['peak_contrast']),'elongated':c['elongated']=='1','linear':encode(linear[crop],'PNG'),'enhanced':encode(enhanced[crop],'PNG')})
     return out
 
-def write_launcher(report, image_folder):
-    """Create a Windows launcher beside the report; never overwrite another file."""
+def launcher_text(report, image_folder):
+    """Launch the desktop app without a second helper window on Windows."""
     def quote(value):
         value=str(value)
         if any(c in value for c in '"\r\n'):
             raise ValueError('Path cannot be represented in a Windows launcher')
         return '"'+value.replace('%','%%')+'"'
-    command=' '.join(quote(p) for p in [
-        Path(sys.executable),Path(__file__).with_name('review_server.py').absolute(),
-        report.absolute(),image_folder])
+    app=Path(__file__).resolve().parents[1]/'astro_app.py'
+    pythonw=Path(sys.executable).with_name('pythonw.exe')
+    if app.exists() and pythonw.exists():
+        command='start "" '+' '.join(quote(p) for p in [pythonw,app,report.absolute()])
+    else:
+        command=' '.join(quote(p) for p in [
+            Path(sys.executable),Path(__file__).with_name('review_server.py').absolute(),
+            report.absolute(),image_folder])
+    return '@echo off\r\nsetlocal DisableDelayedExpansion\r\nchcp 65001 >nul\r\n'+command+'\r\nif errorlevel 1 pause\r\n'
+
+
+def write_launcher(report, image_folder):
     launcher=report.with_suffix('.cmd')
     with launcher.open('x',encoding='utf-8',newline='') as handle:
-        handle.write('@echo off\r\nsetlocal DisableDelayedExpansion\r\nchcp 65001 >nul\r\n'+command+'\r\nif errorlevel 1 pause\r\n')
+        handle.write(launcher_text(report,image_folder))
     return launcher
 
 def build(summary,candidates,output,title,workers=4):
