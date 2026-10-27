@@ -1,140 +1,87 @@
-"""Build a self-contained, local review report from Astro CSVs (requires Pillow)."""
-import argparse
-import base64
-import csv
-import html
-import io
-import json
-import math
-from collections import defaultdict
+"""Generate an offline AstroTrack exposure-review workspace (NumPy, OpenCV, Pillow)."""
+import argparse,base64,csv,html,io,json,math
+from collections import Counter,defaultdict
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor,as_completed
+import cv2
+import numpy as np
+from PIL import Image
 
-from PIL import Image, ImageDraw, ImageOps
+def encode(a,format='JPEG'):
+    buf=io.BytesIO();Image.fromarray(a).save(buf,format=format,**({'quality':90} if format=='JPEG' else {}))
+    return 'data:image/'+('jpeg' if format=='JPEG' else 'png')+';base64,'+base64.b64encode(buf.getvalue()).decode('ascii')
 
+def n(value,default=0):
+    try:
+        result=float(value)
+        return result if math.isfinite(result) else default
+    except (TypeError,ValueError):return default
 
-def embed(image):
-    stream = io.BytesIO()
-    image.save(stream, format='JPEG', quality=88)
-    return 'data:image/jpeg;base64,' + base64.b64encode(stream.getvalue()).decode('ascii')
+def read_gray(path):
+    a=cv2.imdecode(np.fromfile(path,dtype=np.uint8),cv2.IMREAD_UNCHANGED)
+    if a is None:raise ValueError('Image cannot be decoded: '+str(path))
+    if a.dtype not in (np.uint8,np.uint16):raise ValueError('Expected unsigned 8/16-bit pixels')
+    if a.ndim==3:a=cv2.cvtColor(a,cv2.COLOR_BGRA2GRAY if a.shape[2]==4 else cv2.COLOR_BGR2GRAY)
+    return a
 
+def views(gray):
+    maximum=np.iinfo(gray.dtype).max
+    sample=gray[::4,::4];lo,hi=np.percentile(sample,[1,99.98]);hi=max(hi,lo+maximum/255)
+    values=np.arange(maximum+1,dtype=np.float32)
+    linear=np.rint(values/maximum*255).astype(np.uint8)
+    norm=np.clip((values-lo)/(hi-lo),0,1)
+    enhanced=np.rint(np.arcsinh(12*norm)/np.arcsinh(12)*255).astype(np.uint8)
+    return linear,enhanced,{'black':round(float(lo),2),'white':round(float(hi),2),'asinh':12}
 
-def escape(value):
-    return html.escape(str(value), quote=True)
+def render_frame(row,stars):
+    path=Path(row['path']);stars=sorted(stars,key=lambda c:n(c.get('peak_contrast')),reverse=True)
+    expected=int(n(row.get('measured_candidates',row.get('usable_stars'))))
+    if len(stars)!=expected:raise ValueError('Candidate count mismatch: '+path.name)
+    bright=stars[:max(1,len(stars)//4)]
+    out={'id':int(row['index']),'name':path.name,'path':str(path),'status':row['status'],'decision':row.get('review_decision','not_analyzed'),'reason':row.get('review_reason',''),'count':len(stars),'fraction':n(row.get('elongated_fraction')),'ratio':n(row.get('median_elongation')),'peaks':int(n(row.get('peak_count'))),'coverage':row.get('coverage','legacy_unknown'),'examined':int(n(row.get('examined_peaks'))),'skipped':int(n(row.get('skipped_peaks'))),'brightFraction':sum(c['elongated']=='1' for c in bright)/len(bright) if bright else None,'error':row.get('error',''),'examples':[],'markers':[]}
+    if row['status']!='ok':return out
+    gray=read_gray(path);h,w=gray.shape
+    if (w,h)!=(int(row['width']),int(row['height'])):raise ValueError('Image size changed: '+str(path))
+    linear,enhanced,stretch=views(gray)
+    # Downsample 16-bit data before display mapping. Native crops retain original pixels.
+    scale=min(1,1280/max(w,h));preview=cv2.resize(gray,(round(w*scale),round(h*scale)),interpolation=cv2.INTER_AREA)
+    out.update(width=w,height=h,previewWidth=preview.shape[1],previewHeight=preview.shape[0],linear=encode(linear[preview]),enhanced=encode(enhanced[preview]),stretch=stretch)
+    shown=stars if len(stars)<=120 else [stars[i] for i in np.linspace(0,len(stars)-1,120,dtype=int)]
+    out['markers']=[{'x':n(c['x']),'y':n(c['y']),'elongated':c['elongated']=='1'} for c in shown]
+    examples=[]
+    for flag in ['1','0']:
+        group=[c for c in stars if c['elongated']==flag]
+        if group:examples.extend(group[i] for i in sorted(set(np.linspace(0,len(group)-1,min(6,len(group)),dtype=int))))
+    padded=np.pad(gray,20,mode='constant')
+    for c in examples:
+        x,y=n(c['x']),n(c['y']);ix,iy=round(x),round(y)
+        crop=padded[iy:iy+41,ix:ix+41]
+        out['examples'].append({'id':c['candidate_id'],'x':x,'y':y,'cx':x-ix+20,'cy':y-iy+20,'ratio':n(c['elongation']),'major':n(c['major_sigma']),'minor':n(c['minor_sigma']),'angle':n(c['angle_degrees']),'contrast':n(c['peak_contrast']),'elongated':c['elongated']=='1','linear':encode(linear[crop],'PNG'),'enhanced':encode(enhanced[crop],'PNG')})
+    return out
 
+def build(summary,candidates,output,title,workers=4):
+    if output.exists():raise FileExistsError(output)
+    with summary.open(encoding='utf-8',newline='') as handle:
+        rows=list(csv.DictReader(handle))
+    grouped=defaultdict(list)
+    with candidates.open(encoding='utf-8',newline='') as handle:
+        for c in csv.DictReader(handle):
+            grouped[(c['index'],c['path'])].append(c)
+    if not rows:raise ValueError('Summary contains no frames')
+    frames=[];cv2.setNumThreads(1)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        jobs={pool.submit(render_frame,r,grouped[(r['index'],r['path'])]):r for r in rows}
+        for job in as_completed(jobs):
+            frames.append(job.result())
+            if len(frames)%20==0 or len(frames)==len(rows):print(f'Prepared {len(frames)}/{len(rows)} frames',flush=True)
+    frames.sort(key=lambda f:f['id'])
+    metadata={'title':title,'frames':frames,'summary':summary.name,'candidates':candidates.name,'versions':sorted({r.get('analysis_version','unknown') for r in rows}),'threshold':1.7,'reviewFraction':.4,'minimumCandidates':8}
+    payload=json.dumps(metadata,ensure_ascii=True,separators=(',',':'),allow_nan=False).replace('<','\\u003c')
+    template=Path(__file__).with_name('astro_report_template.html').read_text(encoding='utf-8')
+    document=template.replace('__TITLE__',html.escape(title)).replace('__REPORT_DATA__',payload)
+    with output.open('x',encoding='utf-8') as f:f.write(document)
+    print(f'Report written: {output} ({len(frames)} frames, {output.stat().st_size/1e6:.1f} MB)',flush=True)
 
-def build(summary_path, candidates_path, output, title):
-    with summary_path.open(encoding='utf-8', newline='') as handle:
-        rows = list(csv.DictReader(handle))
-    with candidates_path.open(encoding='utf-8', newline='') as handle:
-        candidate_rows = list(csv.DictReader(handle))
-    grouped = defaultdict(list)
-    for row in candidate_rows:
-        grouped[(row['index'], row['path'])].append(row)
-    versions = {row.get('analysis_version', 'elongation-v1') for row in rows}
-    version = ', '.join(sorted(versions)) or 'unknown'
-    for row in rows:
-        row['usable_stars'] = row.get('measured_candidates', row.get('usable_stars', '0'))
-    cards = []
-    for row in rows:
-        path = Path(row['path'])
-        key = (row['index'], row['path'])
-        candidates = grouped[key]
-        if len(candidates) != int(row['usable_stars']):
-            raise ValueError(f'Candidate CSV does not match summary for {path.name}')
-        candidates.sort(key=lambda star: float(star['peak_contrast']), reverse=True)
-        decision = row['review_decision']
-        readable = decision.replace('_', ' ').capitalize()
-        coverage = row.get('coverage', 'legacy_unknown')
-        examined = row.get('examined_peaks', 'unknown')
-        skipped = row.get('skipped_peaks', 'unknown')
-        if coverage == 'limited':
-            coverage_text = f"Coverage limited: examined {examined} of {row['peak_count']} detected peaks; skipped {skipped}. Shape result describes only that brightest subset."
-            readable += ' (sample only)'
-        elif coverage == 'all_detected_peaks':
-            coverage_text = f"All {examined} detected peaks examined; none skipped by a processing cap. This is not proof that every star was detected."
-        else:
-            coverage_text = 'Coverage unavailable for this result.'
-        visual = ''
-        if row['status'] == 'ok':
-            with Image.open(path) as original:
-                # Match the analyzer's stored raster, deliberately ignoring EXIF rotation.
-                original.seek(0)
-                if original.mode in ('I;16', 'I;16L', 'I;16B', 'I'):
-                    original = original.point(lambda value: value / 256).convert('L')
-                raster = original.convert('RGB')
-            if raster.size != (int(row['width']), int(row['height'])):
-                raise ValueError(f'Image dimensions changed since analysis: {path}')
-            thumb = ImageOps.contain(raster, (1000, 750))
-            draw = ImageDraw.Draw(thumb)
-            scale = thumb.width / raster.width
-            shown = candidates if len(candidates) <= 120 else [candidates[round(i*(len(candidates)-1)/119)] for i in range(120)]
-            for candidate in shown:
-                x, y = float(candidate['x']) * scale, float(candidate['y']) * scale
-                color = '#f5b841' if candidate['elongated'] == '1' else '#b7e0f4'
-                draw.ellipse((x-4, y-4, x+4, y+4), outline=color, width=1)
-            examples = []
-            for shape in ['1', '0']:
-                group = [s for s in candidates if s['elongated'] == shape]
-                if group:
-                    examples.extend(group[i] for i in sorted({0, len(group)//2, len(group)-1}))
-            crops = []
-            for candidate in examples:
-                x, y = float(candidate['x']), float(candidate['y'])
-                left, top = int(round(x))-20, int(round(y))-20
-                crop = raster.crop((left, top, left+41, top+41)).resize((164, 164), Image.Resampling.NEAREST)
-                overlay = ImageDraw.Draw(crop)
-                angle = math.radians(float(candidate['angle_degrees']))
-                cx, cy = (x-left)*4, (y-top)*4
-                length = float(candidate['major_sigma'])*8
-                dx, dy = math.cos(angle)*length, math.sin(angle)*length
-                overlay.line((cx-dx,cy-dy,cx+dx,cy+dy), fill='#f5b841', width=1)
-                crops.append(f'<figure><img src="{embed(crop)}" alt="Candidate crop with major axis"/>'
-                             f'<figcaption>#{escape(candidate["candidate_id"])} · ratio {float(candidate["elongation"]):.2f}'
-                             f'<br>x {x:.0f}, y {y:.0f}</figcaption></figure>')
-            visual = f'<img class="overview" src="{embed(thumb)}" alt="Measured candidates in {escape(path.name)}"/>'
-            if crops:
-                visual += '<p class="caption">Brightest, middle-ranked and faintest candidates in each shape group (elongated first, then other). Crops are 41×41 pixels enlarged 4×; the line shows the measured major axis.</p><div class="crops">' + ''.join(crops) + '</div>'
-        else:
-            visual = f'<p>Decode/analysis error: {escape(row["error"])}</p>'
-        fraction = 'unavailable' if not row['elongated_fraction'] else f'{float(row["elongated_fraction"]):.1%}'
-        median = 'unavailable' if not row['median_elongation'] else f'{float(row["median_elongation"]):.2f}'
-        cards.append(f'''<section class="frame" data-decision="{escape(decision)}" data-name="{escape(path.name)}" data-coverage="{escape(coverage)}">
-<div class="frame-heading"><h2>{escape(path.name)}</h2><span class="badge {escape(decision)}">{readable}</span></div>
-<p>{escape(row['review_reason'])}</p><p><strong>{escape(coverage_text)}</strong></p>
-<p class="metrics">{escape(row['usable_stars'])} measured candidates · {fraction} elongated · median ratio {median} · {float(row['analysis_ms']):.1f} ms analysis</p>
-<p class="caption">{escape(row['peak_count'])} initial peaks. These candidates are not confirmed stars. Excluded candidates did not pass the measurement checks; they were not automatically classified as elongated.</p>
-{visual}
-<div class="review"><label>Your assessment <select class="human"><option value="unreviewed">Unreviewed</option><option value="elongation_visible">Elongation visible</option><option value="no_obvious_elongation">No obvious elongation</option><option value="uncertain">Uncertain / unsuitable</option></select></label>
-<label>Notes <input class="note" type="text" placeholder="Evidence or uncertainty"/></label></div></section>''')
-    counts = {decision: sum(row['review_decision'] == decision for row in rows)
-              for decision in ['review_suggested', 'no_elongation_flag', 'insufficient_evidence', 'not_analyzed']}
-    stats = ' · '.join(f'{count} {key.replace("_", " ")}' for key, count in counts.items() if count)
-    metadata = json.dumps({'summary': summary_path.name, 'candidates': candidates_path.name,
-                           'analysis_version': version, 'threshold': 1.7, 'review_fraction': .4, 'minimum_candidates': 8}).replace('<', '\\u003c')
-    document = '''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>''' + escape(title) + '''</title><style>
-:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#11171b;color:#e6edf0;font:16px/1.55 system-ui,sans-serif}main{max-width:1120px;margin:auto;padding:40px 28px}h1{font-size:32px;margin:8px 0}h2{font-size:20px;margin:0}p{max-width:95ch}.eyebrow{color:#a2b4bd;font-size:13px;letter-spacing:.1em;text-transform:uppercase}.intro{border-bottom:1px solid #38474f;padding-bottom:28px}.caption{font-size:13px;color:#b4c2c9}.metrics{font-weight:600}.toolbar{display:flex;gap:20px;flex-wrap:wrap;align-items:center;padding:24px 0}.frame{padding:30px 0;border-top:1px solid #38474f}.frame-heading{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.badge{padding:4px 10px;background:#2b3942;font-size:13px}.review_suggested{background:#5c431b;color:#ffe1a2}.insufficient_evidence{background:#403646;color:#ecdaed}.overview{max-width:100%;max-height:750px;display:block;margin:20px auto;object-fit:contain}.crops{display:flex;gap:12px;flex-wrap:wrap}figure{margin:0}figure img{width:144px;height:144px}figcaption{font-size:12px;color:#c3cfd5}select,input,button{font:inherit;background:#1e2a31;color:#e6edf0;border:1px solid #687b86;padding:8px}button{cursor:pointer}.review{display:flex;gap:20px;margin-top:24px;flex-wrap:wrap}label{display:flex;gap:10px;align-items:center}.review input{width:300px}a{color:#a5d7f2}[hidden]{display:none!important}@media(max-width:600px){main{padding:20px 14px}h1{font-size:26px}.review label{display:block}.review input{width:100%}}
-</style><main><div class="intro"><div class="eyebrow">Astro Image Analyzer · Milestone 2 · experimental</div><h1>''' + escape(title) + '''</h1><p>''' + escape(stats) + '''</p>
-<p>This report measures the shape of candidate stars. It does not diagnose a tracking fault or certify a frame as good. Sky motion, optics and processing can all affect the result. The supplied phone photos were taken on a fixed tripod; synthetic controls are labeled separately.</p>
-<p><strong>Provisional rule:</strong> at least 8 usable candidates; suggest review when at least 40% have a long-to-short axis ratio ≥ 1.7. A ratio near 1 is round. Coverage is reported separately from shape. By default all detected peaks are examined; an optional cap limits the result to the examined subset. Insufficient evidence means fewer than 8 measurable candidates.</p>
-<p class="caption">Stored-raster orientation (EXIF rotation ignored). Overview shows at most 120 measured candidates sampled across the contrast range: amber = elongated, pale blue = other. Examples span bright to faint candidates, not human ground truth. No auto-stretch is applied. Repeated/edited phone images are not independent validation observations.</p>
-<p class="caption">Source: locally supplied images and the accompanying CSV files. Algorithm: ''' + escape(version) + '''. Summary: ''' + escape(summary_path.name) + '''. Full candidate measurements: ''' + escape(candidates_path.name) + '''.</p></div>
-<div class="toolbar"><label>Show <select id="filter"><option value="all">All frames</option><option value="review_suggested">Review suggested</option><option value="insufficient_evidence">Insufficient evidence</option><option value="no_elongation_flag">No elongation flag</option><option value="not_analyzed">Not analyzed</option></select></label><button id="export">Export human assessments</button><span class="caption">Edits stay in this tab until exported.</span></div>
-''' + ''.join(cards) + '''<footer><p>Measurements use background-subtracted second moments. <a href="https://photutils.readthedocs.io/en/stable/api/photutils.segmentation.SourceCatalog.html">Reference definition of elongation</a>. This implementation does not depend on Photutils.</p><p class="caption">No photos are uploaded by this report. Decisions are provisional; no real-world accuracy claim has been established.</p></footer></main>
-<script>const metadata=''' + metadata + ''';
-document.querySelector('#filter').addEventListener('change',e=>{document.querySelectorAll('.frame').forEach(s=>{s.hidden=e.target.value!=='all'&&s.dataset.decision!==e.target.value})});
-document.querySelector('#export').addEventListener('click',()=>{const data={...metadata,reviewed_at:new Date().toISOString(),assessments:[...document.querySelectorAll('.frame')].map(s=>({file:s.dataset.name,algorithm_decision:s.dataset.decision,coverage:s.dataset.coverage,human_assessment:s.querySelector('.human').value,notes:s.querySelector('.note').value}))};const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='astro-human-assessments.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)});
-</script></html>'''
-    with output.open('x', encoding='utf-8') as handle:
-        handle.write(document)
-    print(f'Report written: {output} ({len(rows)} frames)')
-
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('summary', type=Path)
-    parser.add_argument('candidates', type=Path)
-    parser.add_argument('output', type=Path)
-    parser.add_argument('--title', default='Phone-photo elongation review')
-    args = parser.parse_args()
-    build(args.summary, args.candidates, args.output, args.title)
+if __name__=='__main__':
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('summary',type=Path);p.add_argument('candidates',type=Path);p.add_argument('output',type=Path);p.add_argument('--title',default='Exposure review');p.add_argument('--workers',type=int,default=4)
+    a=p.parse_args();build(a.summary,a.candidates,a.output,a.title,max(1,min(a.workers,8)))

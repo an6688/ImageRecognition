@@ -112,11 +112,39 @@ in Release builds. See `docs/DATASETS.md` for real-world validation sources and
 & ./.venv/Scripts/python.exe -m unittest discover -s astro/tests -p test_report.py -v
 ```
 
-Open the HTML report in a browser. It embeds the overview images and candidate
-crops, supports filtering, and lets a reviewer export manual assessments as JSON.
-There are no network requests or uploads; reviewer edits last only until the tab
-is closed unless exported. The report script requires Pillow (already a dependency
-of the existing app); the C++ executable remains independent of Python.
+Open the HTML report in a browser. The offline workspace includes an exposure list,
+issue filters, filename search, sorting, native-pixel candidate crops, review notes,
+and JSON assessment export. Click a candidate thumbnail to show a cyan arrow and
+ring at its location in the full-image preview. This pointer stays visible when
+**Show markers** is off; **Hide pointer** removes it. Zooming keeps the selected
+location in view. Changing exposure resets the pointer.
+
+**Linear · original scale** maps the full numeric pixel range directly to the
+display. **Enhanced · brighter preview** uses a per-exposure percentile/asinh
+stretch to reveal faint detail. Both are grayscale previews matching the analysis
+luminance. The stretch is applied to 16-bit data before making the 8-bit display
+image, and all crops in an exposure share the same stretch. Brightness and marker
+controls affect display only; source images, measurements and decisions are unchanged.
+Different exposures use separate display ranges, so their preview brightness is
+not a photometric comparison.
+
+The analyzer does not identify objects: a galaxy, close pair or other extended
+source can be measured as an elongated star candidate. A review suggestion is not
+a confirmed trail or a reason to automatically reject an exposure. The brightest-
+quarter fraction is a descriptive cross-check, not a calibrated confidence score.
+
+The report embeds previews and requires no server or uploads. Assessments remain
+in the tab until exported. The generator requires NumPy, OpenCV and Pillow (already
+in the app requirements), and uses the adjacent `astro_report_template.html`. Keep
+that template beside `report.py`. The C++ analyzer remains independent of Python.
+Generated reports, measurements, photos and build products stay in ignored folders.
+
+Run the report tests with:
+
+```powershell
+.venv\Scripts\python.exe -m unittest discover -s astro/tests -p test_report.py -v
+node astro/tests/report_controls.cjs astro/astro_report_template.html
+```
 The optional fourth CLI argument creates a candidate CSV with stored-raster
 coordinates, axis lengths, orientation, ratios and contrast. Both output files
 must be new, distinct `.csv` paths. Fatal output errors can leave partial outputs.
