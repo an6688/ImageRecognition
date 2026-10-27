@@ -377,3 +377,17 @@ real-time camera input, or guaranteed star-based registration is provided. Inter
 and downsampling affect shape. Use the original-resolution C++ analyzer for its
 existing candidate-shape measurements. A median can inherit a defect present in most
 frames; max/min can be dominated by outliers. These are exploratory views.
+
+## Bulk review decisions
+
+Choose **Review suggested** to show **Reject all shown**, or **No elongation flag**
+to show **Keep all shown** below the exposure filters. Search and the review-decision
+filter narrow the affected set. The confirmation shows how many decisions will
+change, including existing decisions it will replace. These actions preserve notes
+and measurements, save in the browser, and never move files. Use the separate
+Rejected images action to move reviewed rejections.
+
+**Undo bulk decision** reverses the latest bulk change in the current tab. It
+preserves any decisions or notes edited afterward. Undo history does not survive
+refreshing the page. Bulk decisions are unavailable during playback, analysis,
+or file moves.
