@@ -68,6 +68,8 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(frame['skipped'],11)
         self.assertEqual(frame['decision'],'review_suggested')
         self.assertEqual(frame['count'],1)
+        self.assertTrue(Path(frame['path']).is_absolute())
+        self.assertEqual(Path(frame['path']),self.image.absolute())
         self.assertNotIn('See the evidence. Make the call.',text)
         self.assertNotIn('Why the earlier preview looked black.',text)
         for item in [frame,*frame['examples']]:

@@ -133,8 +133,9 @@ source can be measured as an elongated star candidate. A review suggestion is no
 a confirmed trail or a reason to automatically reject an exposure. The brightest-
 quarter fraction is a descriptive cross-check, not a calibrated confidence score.
 
-The report embeds previews and requires no server or uploads. Assessments remain
-in the tab until exported. The generator requires NumPy, OpenCV and Pillow (already
+The report embeds previews and requires no server or uploads. Decisions and notes
+save in browser storage when available; export a portable backup before switching
+browsers. See the review workflow below. The generator requires NumPy, OpenCV and Pillow (already
 in the app requirements), and uses the adjacent `astro_report_template.html`. Keep
 that template beside `report.py`. The C++ analyzer remains independent of Python.
 Generated reports, measurements, photos and build products stay in ignored folders.
@@ -165,6 +166,53 @@ and generate a report with `--title 'Synthetic controls'`. The generator refuses
 existing directories and writes known construction labels. Synthetic tests do not
 establish real-world accuracy. See `docs/ELONGATION.md` for the algorithm, safeguards
 and the measured phone-photo results.
+
+
+## Review decisions and rejected files
+
+Use **Keep**, **Reject**, or **Revisit** above the preview. These are your decisions;
+the algorithm's flag and optional shape assessment remain separate. The exposure
+list shows your decision, and its review filter works alongside the issue filter.
+**Next unreviewed** clears other filters and finds the next unreviewed exposure.
+K / R / V are shortcuts when you are not typing or using another control.
+**Clear decision** returns an exposure to Not reviewed and keeps its notes.
+
+Decisions and notes save automatically in this browser, separately for each set
+of source image paths. Local-file storage availability depends on the browser;
+a visible warning appears if saving fails. **Export review** downloads
+astro-review.json as a portable backup. **Import review** restores that backup
+and replaces the current review for the same image sequence. Export first if
+you want to retain the current decisions. Moving the HTML or changing browsers
+can require importing a backup. Clearing browser data removes browser saves.
+
+To separate rejected files in File Explorer, run from the repository root:
+
+~~~bat
+.venv\Scripts\python.exe astro\organize_review.py "C:\path\to\astro-review.json" "C:\path\to\image-folder"
+~~~
+
+This is a preview: no images change. Check the listed moves, then repeat with
+**--apply** to move only explicitly rejected images into a **Rejected** subfolder.
+Keep, Revisit and unreviewed images stay in their original locations. The tool
+uses the exact paths from the report: it does not also move corresponding FITS
+files, and it does not infer decisions from an algorithm flag or a shape note.
+
+The entire plan is checked for missing sources, duplicate paths, unsupported
+files, paths outside the chosen folder and existing destinations before moving.
+Subfolders are preserved. Files are copied to exclusively created destinations,
+then removed from their original locations only after a successful copy.
+A JSONL move log in Rejected records planned and completed moves. If execution
+is interrupted, inspect that log and the two locations before retrying; completed
+moves are not automatically rolled back. To undo, move files from Rejected back
+to their logged original locations in Explorer. Existing files are never replaced.
+The report retains its embedded previews after source images move.
+
+Checks for this workflow:
+
+~~~bat
+.venv\Scripts\python.exe -m unittest discover -s astro/tests -p test_organize_review.py -v
+node astro/tests/review_workflow.cjs astro/astro_report_template.html
+~~~
 
 ## Experimental sequence explorer
 

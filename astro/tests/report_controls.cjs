@@ -29,7 +29,7 @@ for(const [,id] of source.matchAll(/\bid="([^"]+)"/g)){
 // SVG does not reflect a .hidden property into attributes. Model that distinction.
 elements['selection-overlay'].attributes.hidden='';
 elements['report-data'].textContent=JSON.stringify(data);
-for(const [id,value] of Object.entries({filter:'all',sort:'sequence',display:'enhanced',gain:'1',zoom:'1'}))elements[id].value=value;
+for(const [id,value] of Object.entries({filter:'all','review-filter':'all',sort:'sequence',display:'enhanced',gain:'1',zoom:'1'}))elements[id].value=value;
 const inspector={hidden:false};
 let exported,download,revoked=false;
 const context={
@@ -38,6 +38,7 @@ const context={
    querySelector(selector){assert.equal(selector,'.inspector');return inspector},
    createElement(){return {click(){download=this.download}}}
  },
+ localStorage:{getItem(){return null},setItem(){}},
  window:{addEventListener(){}},
  Blob:class{constructor(parts){exported=JSON.parse(parts.join(''))}},
  URL:{createObjectURL(){return 'blob:test'},revokeObjectURL(){revoked=true}},
@@ -93,7 +94,7 @@ elements.export.click();
 assert.equal(exported.assessments.length,3);
 assert.equal(exported.assessments[1].notes,'Check the galaxy separately');
 assert.equal(exported.analysis_version,'elongation-v2');
-assert.equal(download,'astro-human-assessments.json');
+assert.equal(download,'astro-review.json');
 assert.equal(revoked,true);
 assert.ok(!source.includes('See the evidence. Make the call.'));
 assert.ok(!source.includes('Why the earlier preview looked black.'));

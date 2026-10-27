@@ -38,7 +38,7 @@ def render_frame(row,stars):
     expected=int(n(row.get('measured_candidates',row.get('usable_stars'))))
     if len(stars)!=expected:raise ValueError('Candidate count mismatch: '+path.name)
     bright=stars[:max(1,len(stars)//4)]
-    out={'id':int(row['index']),'name':path.name,'path':str(path),'status':row['status'],'decision':row.get('review_decision','not_analyzed'),'reason':row.get('review_reason',''),'count':len(stars),'fraction':n(row.get('elongated_fraction')),'ratio':n(row.get('median_elongation')),'peaks':int(n(row.get('peak_count'))),'coverage':row.get('coverage','legacy_unknown'),'examined':int(n(row.get('examined_peaks'))),'skipped':int(n(row.get('skipped_peaks'))),'brightFraction':sum(c['elongated']=='1' for c in bright)/len(bright) if bright else None,'error':row.get('error',''),'examples':[],'markers':[]}
+    out={'id':int(row['index']),'name':path.name,'path':str(path.absolute()),'status':row['status'],'decision':row.get('review_decision','not_analyzed'),'reason':row.get('review_reason',''),'count':len(stars),'fraction':n(row.get('elongated_fraction')),'ratio':n(row.get('median_elongation')),'peaks':int(n(row.get('peak_count'))),'coverage':row.get('coverage','legacy_unknown'),'examined':int(n(row.get('examined_peaks'))),'skipped':int(n(row.get('skipped_peaks'))),'brightFraction':sum(c['elongated']=='1' for c in bright)/len(bright) if bright else None,'error':row.get('error',''),'examples':[],'markers':[]}
     if row['status']!='ok':return out
     gray=read_gray(path);h,w=gray.shape
     if (w,h)!=(int(row['width']),int(row['height'])):raise ValueError('Image size changed: '+str(path))
