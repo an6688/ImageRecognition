@@ -20,10 +20,14 @@ for(const [,id] of source.matchAll(/\bid="([^"]+)"/g)){
     style:{},attributes:{},clientWidth:750,clientHeight:590,offsetLeft:22,offsetTop:22,
     listeners:{},classList:{values:new Set(),toggle(k,on){on?this.values.add(k):this.values.delete(k)}},
     setAttribute(k,v){this.attributes[k]=v},
+    toggleAttribute(k,on){if(on)this.attributes[k]='';else delete this.attributes[k];return !!on},
+    hasAttribute(k){return Object.hasOwn(this.attributes,k)},
     addEventListener(k,fn){this.listeners[k]=fn},
     click(){this.listeners.click?.({})}
   };
 }
+// SVG does not reflect a .hidden property into attributes. Model that distinction.
+elements['selection-overlay'].attributes.hidden='';
 elements['report-data'].textContent=JSON.stringify(data);
 for(const [id,value] of Object.entries({filter:'all',sort:'sequence',display:'enhanced',gain:'1',zoom:'1'}))elements[id].value=value;
 const inspector={hidden:false};
@@ -46,9 +50,9 @@ const pick=index=>elements['sample-grid'].listeners.click({
 });
 assert.equal(elements['frame-title'].textContent,'Frame 001');
 assert.ok(elements['visual-content'].classList.values.has('no-markers'));
-assert.equal(elements['selection-overlay'].hidden,true);
+assert.equal(elements['selection-overlay'].hasAttribute('hidden'),true);
 pick(1);
-assert.equal(elements['selection-overlay'].hidden,false);
+assert.equal(elements['selection-overlay'].hasAttribute('hidden'),false);
 assert.equal(elements['location-bar'].hidden,false);
 assert.match(elements['selection-overlay'].innerHTML,/<polygon/);
 assert.match(elements['selection-overlay'].innerHTML,/cx="1900" cy="2500"/);
@@ -64,15 +68,15 @@ assert.ok(elements.viewport.scrollTop>0);
 elements.display.value='linear';fire('display','change');
 assert.equal(elements.overview.src,'data:linear-0');
 assert.equal(elements.crop.src,'data:crop2-linear');
-assert.equal(elements['selection-overlay'].hidden,false);
+assert.equal(elements['selection-overlay'].hasAttribute('hidden'),false);
 elements.markers.checked=true;fire('markers','change');
 elements.markers.checked=false;fire('markers','change');
-assert.equal(elements['selection-overlay'].hidden,false);
+assert.equal(elements['selection-overlay'].hasAttribute('hidden'),false);
 elements['hide-location'].click();
-assert.equal(elements['selection-overlay'].hidden,true);
+assert.equal(elements['selection-overlay'].hasAttribute('hidden'),true);
 pick(0);elements.next.click();
 assert.equal(elements['frame-title'].textContent,'Frame 002');
-assert.equal(elements['selection-overlay'].hidden,true,'New exposure resets selected location');
+assert.equal(elements['selection-overlay'].hasAttribute('hidden'),true,'New exposure resets selected location');
 elements.assessment.value='no_obvious_elongation';fire('assessment','change');
 elements.notes.value='Check the galaxy separately';fire('notes','input');
 elements.next.click();elements.prev.click();
