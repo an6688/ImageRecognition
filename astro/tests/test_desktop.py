@@ -1,5 +1,6 @@
 """Desktop session ownership and settings checks using disposable reports."""
 import json
+import gc
 from pathlib import Path
 import sys
 import tempfile
@@ -66,6 +67,66 @@ class DesktopTests(unittest.TestCase):
         state.write_text('not json')
         self.assertEqual(load_state(state),{})
 
+    def test_folder_picker_starts_analysis_and_opens_finished_review(self):
+        import tkinter as tk
+        import time
+        from unittest.mock import patch
+        from astro.desktop import AstroPanel
+        from astro.workflow import ReviewResult
+        root=tk.Tk();root.withdraw()
+        panel=AstroPanel(root,state_path=self.root/'ui-state.json')
+        def analyze(folder,**kwargs):
+            self.assertEqual(folder,str(self.images))
+            kwargs['progress']({'phase':'previews','message':'Preparing previews','done':1,'total':2})
+            return ReviewResult(self.report,self.root,2,0)
+        try:
+            with patch('astro.desktop.filedialog.askdirectory',return_value=str(self.images)), \
+                 patch('astro.workflow.analyze_folder',side_effect=analyze), \
+                 patch.object(panel.session,'start',return_value='http://127.0.0.1:8765'), \
+                 patch('astro.desktop.webbrowser.open') as browser:
+                panel.choose_folder()
+                deadline=time.monotonic()+3
+                while panel.busy and time.monotonic()<deadline:
+                    root.update();time.sleep(.01)
+                self.assertFalse(panel.busy)
+                browser.assert_called_once_with('http://127.0.0.1:8765')
+                self.assertIn('2 images',panel.status['text'])
+                self.assertEqual(load_state(panel.state_path)['last_source'],str(self.images))
+                self.assertFalse(panel.advanced_visible)
+        finally:
+            panel.dispose();root.destroy()
+            del panel,root
+            gc.collect()
+
+    def test_cancel_button_leaves_existing_review_and_no_browser_open(self):
+        import tkinter as tk
+        import time
+        from unittest.mock import patch
+        from astro.desktop import AstroPanel
+        from astro.workflow import AnalysisCancelled
+        root=tk.Tk();root.withdraw()
+        panel=AstroPanel(root,state_path=self.root/'cancel-state.json')
+        def analyze(folder,**kwargs):
+            self.assertTrue(kwargs['cancel'].wait(2))
+            raise AnalysisCancelled('Analysis cancelled.')
+        try:
+            with patch('astro.workflow.analyze_folder',side_effect=analyze), \
+                 patch('astro.desktop.webbrowser.open') as browser, \
+                 patch.object(panel.session,'start') as start:
+                panel.analyze_folder(str(self.images))
+                self.assertEqual(str(panel.cancel_button['state']),'normal')
+                panel.cancel_analysis()
+                deadline=time.monotonic()+3
+                while panel.busy and time.monotonic()<deadline:
+                    root.update();time.sleep(.01)
+                self.assertFalse(panel.busy)
+                self.assertIn('cancelled',panel.status['text'])
+                browser.assert_not_called();start.assert_not_called()
+        finally:
+            panel.dispose();root.destroy()
+            del panel,root
+            gc.collect()
+
     def test_panel_constructs_without_starting_helper_until_activated(self):
         import tkinter as tk
         from astro.desktop import AstroPanel
@@ -79,6 +140,8 @@ class DesktopTests(unittest.TestCase):
             panel.dispose()
         finally:
             root.destroy()
+            del panel,root
+            gc.collect()
 
 
 if __name__=='__main__':

@@ -70,7 +70,7 @@ function launch(store=new Map(),blocked=false,session=null,fetchImpl=undefined){
  await recovered.import(backup);assert.equal(recovered.export().assessments[1].review_decision,'reject');
 
  // The actual HTML default, not just the mock value, must be Linear.
- assert.match(source,/<select id="display"><option value="linear" selected>/);
+ assert.match(source,/<select id="display"[^>]*><option value="linear" selected>/);
  const offline=launch();
  assert.equal(offline.els.overview.src,'data:linear');
  assert.equal(offline.els['rejected-count'].textContent,'0','Algorithm flags alone do not count as rejections');

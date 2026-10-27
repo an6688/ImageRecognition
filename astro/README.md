@@ -4,6 +4,30 @@ A standalone, sequential C++17 command-line pipeline inside the existing Python
 photo-organizer repository. No Python runtime, models, UI, database, camera SDK,
 or PhotoPeople dependency is required by this executable.
 
+## Choose a folder and analyze it
+
+Open AstroTrack and click **Choose image folder…**. The app validates the folder,
+runs the existing C++ analyzer, prepares the previews, and opens the completed
+review with folder access. No terminal command or upload is required.
+
+Supported inputs are 8/16-bit PNG, JPEG and TIFF images directly inside the chosen
+folder. Subfolders (including Rejected) are excluded. FITS files still require
+conversion. Build the analyzer once using the instructions below; the desktop
+workflow finds astro/build/Release/astro_analyze.exe or the equivalent single-
+configuration build executable.
+
+The analysis stage shows the input count and an activity indicator. Preview
+preparation shows actual completed/total progress. **Cancel analysis** stops the
+owned analyzer process or cancels pending preview work, then waits for current
+preview work to finish. Source images are read without modification. Closing the
+desktop app also requests cancellation of a running folder analysis.
+
+Every run uses a new folder under data/astrotrack-runs, containing summary.csv,
+candidates.csv, review.html, a launcher, analysis.log and run.json. The manifest
+records ready, cancelled or error state. Existing runs are preserved. If some
+images cannot be decoded, the review lists those failures; if none can be read,
+the app explains the failure and retains the diagnostic files.
+
 ## Desktop launch and capture playback
 
 Double-click **Start AstroTrack.bat** in the repository root, or select the
@@ -14,7 +38,7 @@ server command or helper window is needed. Keep the desktop app open while movin
 files. Use one AstroTrack instance at a time; close an older manual launcher if it
 already occupies the review port.
 
-**Capture playback** runs through every capture embedded in the report in filename
+**Capture playback** is collapsed initially. Expand it to play every capture embedded in the report in filename
 order, independently of review filters and sorting. Play/Pause, 1/2/5/10 fps,
 looping, a scrubber, and frame stepping are available. Each preview is decoded
 before the next display delay begins, so playback may be slower on a busy machine.
@@ -23,7 +47,7 @@ Unreadable exposures remain in the timeline with their error shown.
 
 Choose **Review this frame** to pause and open the selected capture in the inspector.
 Inspector decisions and notes are disabled during playback to prevent marking a
-different image. Playback pauses when the browser tab is hidden. Previews are not
+different image. Playback pauses when its panel is collapsed or the browser tab is hidden. Previews are not
 aligned, and filename order does not reproduce capture intervals. This does not
 encode or export a video.
 

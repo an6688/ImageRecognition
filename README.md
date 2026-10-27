@@ -12,12 +12,18 @@ run `.venv\Scripts\python.exe app.py` from this directory.
 ## AstroTrack
 
 Open the **AstroTrack** tab in the desktop app, or double-click
-**Start AstroTrack.bat** to launch it directly. Choose an existing exposure review
-once; AstroTrack remembers it for the next launch and starts folder access
-automatically. The report opens in your browser. Keep the desktop app open while
-using its file-move actions; closing the app stops the service after any active move.
+**Start AstroTrack.bat** to launch it directly. Click **Choose image folder…** to
+analyze PNG, JPEG or TIFF exposures and open the review automatically. Processing
+is local; nothing is uploaded. Only files directly in the chosen folder are used.
+The compiled astro analyzer must already be available under astro/build.
 
-The review includes **Capture playback** for the entire report: Play/Pause, speed,
+The app shows analysis and preview-preparation progress and supports cancellation.
+Each run saves a new report and measurements under ignored data/astrotrack-runs.
+You can also open a saved review. AstroTrack remembers your last report and folder,
+and starts folder access automatically. Keep the desktop app open while using
+file-move actions; closing it stops the service after any active move.
+
+Expand **Capture playback** for the entire report (collapsed initially): Play/Pause, speed,
 looping, a position slider, and **Review this frame** to inspect or mark the paused
 capture. Playback uses filename order and existing unaligned previews. Linear is
 the default; Enhanced is available. This is not real capture timing or an encoded

@@ -467,6 +467,7 @@ class App:
             return
         if self.astro.busy:
             self.astro.closing=True
+            self.astro.cancel_analysis()
             self.astro.status.config(text='Finishing the AstroTrack operation before closing…')
             self.root.after(100,self.close)
             return

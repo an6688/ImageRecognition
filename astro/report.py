@@ -2,7 +2,7 @@
 import argparse,base64,csv,html,io,json,math,os,sys
 from collections import Counter,defaultdict
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor,as_completed
+from concurrent.futures import ThreadPoolExecutor,as_completed,CancelledError
 import cv2
 import numpy as np
 from PIL import Image
@@ -83,7 +83,11 @@ def write_launcher(report, image_folder):
         handle.write(launcher_text(report,image_folder))
     return launcher
 
-def build(summary,candidates,output,title,workers=4):
+def build(summary,candidates,output,title,workers=4,progress=None,cancel=None):
+    def check_cancel():
+        if cancel is not None and cancel.is_set():
+            raise CancelledError('Review preparation cancelled')
+    check_cancel()
     if output.exists():raise FileExistsError(output)
     launcher_requested=os.name=='nt' and output.suffix.lower() in {'.html','.htm'}
     if launcher_requested and output.with_suffix('.cmd').exists():
@@ -98,14 +102,25 @@ def build(summary,candidates,output,title,workers=4):
     frames=[];cv2.setNumThreads(1)
     with ThreadPoolExecutor(max_workers=workers) as pool:
         jobs={pool.submit(render_frame,r,grouped[(r['index'],r['path'])]):r for r in rows}
-        for job in as_completed(jobs):
-            frames.append(job.result())
-            if len(frames)%20==0 or len(frames)==len(rows):print(f'Prepared {len(frames)}/{len(rows)} frames',flush=True)
+        try:
+            for job in as_completed(jobs):
+                check_cancel()
+                frames.append(job.result())
+                if progress is not None:
+                    progress(len(frames),len(rows))
+                elif len(frames)%20==0 or len(frames)==len(rows):
+                    print(f'Prepared {len(frames)}/{len(rows)} frames',flush=True)
+        except BaseException:
+            for job in jobs:
+                job.cancel()
+            raise
+    check_cancel()
     frames.sort(key=lambda f:f['id'])
     metadata={'title':title,'frames':frames,'summary':summary.name,'candidates':candidates.name,'versions':sorted({r.get('analysis_version','unknown') for r in rows}),'threshold':1.7,'reviewFraction':.4,'minimumCandidates':8}
     payload=json.dumps(metadata,ensure_ascii=True,separators=(',',':'),allow_nan=False).replace('<','\\u003c')
     template=Path(__file__).with_name('astro_report_template.html').read_text(encoding='utf-8')
     document=template.replace('__TITLE__',html.escape(title)).replace('__REPORT_DATA__',payload)
+    check_cancel()
     with output.open('x',encoding='utf-8') as f:f.write(document)
     folders={Path(f['path']).parent for f in frames}
     if launcher_requested and len(folders)==1:

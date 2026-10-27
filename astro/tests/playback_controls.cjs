@@ -7,7 +7,7 @@ function start(count=4){
  width:100,height:100,count:0,fraction:0,ratio:1,coverage:'all_detected_peaks',brightFraction:null,
  markers:[],examples:[],linear:'linear-'+id,enhanced:'enhanced-'+id})).reverse();
  const els={},windowEvents={},documentEvents={},timers=new Map();let serial=0;
- for(const [,id] of source.matchAll(/\bid="([^"]+)"/g))els[id]={value:'',hidden:false,checked:false,textContent:'',innerHTML:'',
+ for(const [,id] of source.matchAll(/\bid="([^"]+)"/g))els[id]={value:'',open:false,hidden:false,checked:false,textContent:'',innerHTML:'',
  style:{},attributes:{},clientWidth:750,clientHeight:590,listeners:{},classList:{toggle(){}},
  setAttribute(k,v){this.attributes[k]=v},toggleAttribute(k,on){if(on)this.attributes[k]='';else delete this.attributes[k]},
  addEventListener(k,fn){(this.listeners[k]??=[]).push(fn)},async click(){for(const fn of this.listeners.click||[])await fn({})}};
@@ -29,6 +29,9 @@ function start(count=4){
 }
 (async()=>{
  const app=start(),e=app.els;
+ assert.match(source,/<details id="playback-panel" class="playback-panel">/);
+ assert.equal(e['playback-panel'].open,false,'Playback starts collapsed');
+
  await e['playback-play'].click();
  assert.equal(e['playback-image'].src,'linear-0','Playback follows filename order, not input/review sort order');
  assert.equal(e.keep.disabled,true,'Pause before making decisions in the inspector');
@@ -63,6 +66,17 @@ function start(count=4){
  const starting=e['playback-play'].click();
  await Promise.resolve();await e['playback-play'].click();ready();await starting;
  assert.equal(app.timers.size,0);
+
+ const collapsible=start();
+ await collapsible.els['playback-play'].click();
+ assert.equal(collapsible.els['playback-panel'].open,true);
+ collapsible.els['playback-panel'].open=false;
+ await collapsible.fire('playback-panel','toggle');
+ assert.equal(collapsible.timers.size,0,'Closing the panel stops playback');
+ assert.equal(collapsible.els['playback-play'].textContent,'Play captures');
+ collapsible.els.display.value='enhanced';
+ await collapsible.fire('display','change');
+ assert.equal(collapsible.els['playback-panel'].open,false,'Display changes do not reopen the collapsed panel');
  const many=start(501);
  assert.match(many.els['playback-summary'].textContent,/501 captures/);
  assert.equal(many.els['playback-position'].max,'500','No 40-frame aligned-viewer cap');

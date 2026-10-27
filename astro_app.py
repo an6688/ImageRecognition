@@ -8,8 +8,8 @@ from astro.desktop import AstroPanel
 def main():
     root=tk.Tk()
     root.title('AstroTrack')
-    root.geometry('900x540')
-    root.minsize(780,480)
+    root.geometry('900x620')
+    root.minsize(780,540)
     ttk.Style(root).theme_use('clam')
     panel=AstroPanel(root)
     def close():
@@ -17,6 +17,7 @@ def main():
         root.update_idletasks()
         panel.closing=True
         if panel.busy:
+            panel.cancel_analysis()
             root.after(100,close)
             return
         panel.dispose()
